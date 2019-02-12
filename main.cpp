@@ -1253,6 +1253,30 @@ private:
 		//renderPassInfo.dependencyCount = 1;
 		//renderPassInfo.pDependencies = &dependency;
 
+		VkPresentInfoKHR presentInfo = {};
+		presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+		
+		//The first 2 parameters specify which semaphores to wait on before presentation can happen, just like VkSubmitInfo.
+		presentInfo.waitSemaphoreCount = 1;
+		presentInfo.pWaitSemaphores = signalSemaphores;
+
+		VkSwapchainKHR swapChains[] = { m_SwapChain };
+
+		//The next 3 parameters specify the swap chains to present images to and the index of the image for each swap chain.
+		//This will almost always be a single one.
+		presentInfo.swapchainCount = 1;
+		presentInfo.pSwapchains = swapChains;
+		presentInfo.pImageIndices = &imageIndex;
+
+		//There is one last optional parameter called pResults.
+		//It allows you to specify an array of VkResult values to check for every individual swap chain if presentation was successful.
+		//It's not necessary if you're only using a single swap chain, because you can simply use the return value of the present function.
+		presentInfo.pResults = nullptr; //Optional
+
+		//The vkQueuePresentKHR function submits the request to present an image to the swap chain.
+		//We'll add error handling for both vkAcquireNextImageKHR and vkQeuuePresentKGR in the next chapter, because their failure
+		//does not necessarily mean the program should terminate, unlike the functions we've seen so far
+		vkQueuePresentKHR(m_PresentQueue, &presentInfo);
 
 	}
 
@@ -1263,7 +1287,7 @@ private:
 
 		if (vkCreateSemaphore(m_Device, &semaphoreInfo, nullptr, &m_ImageAvailableSemaphore) != VK_SUCCESS ||
 			vkCreateSemaphore(m_Device, &semaphoreInfo, nullptr, &m_RenderFinishedSamephore) != VK_SUCCESS)
-			throw std::runtime_error("failed to create samephores!");
+			throw std::runtime_error("failed to create semaphores!");
 	}
 
 private:
@@ -1314,10 +1338,10 @@ int main()
 	catch (const std::exception& e)
 	{
 		std::cerr << e.what() << std::endl;
+		std::cin.get();
 		return EXIT_FAILURE;
 	}
 
 	std::cin.get();
-
 	return EXIT_SUCCESS;
 }
