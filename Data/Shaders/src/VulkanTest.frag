@@ -17,12 +17,15 @@ void main()
 	//The sampler automatically takes care of the filtering and transformations
 	//in the background.
 
+	//Debugging
+	//outColor = vec4(fragTexCoord, 0.0f, 1.0f);
+
 	//Regular texture
-	//outColor = texture(texSampler, fragTexCoord);
+	outColor = texture(texSampler, fragTexCoord);
 
 	//texture + color
 	//outColor = vec4(fragColor * texture(texSampler, fragTexCoord).rgb, 1.0f);
 
 	//Texturing beyond dimensions
-	outColor = texture(texSampler, fragTexCoord * 2.0f);
+	//outColor = texture(texSampler, fragTexCoord * 2.0f);
 }
