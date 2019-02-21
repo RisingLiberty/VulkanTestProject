@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <fstream>
 #include <array>
+#include <unordered_map>
 
 //Exposes functions to do precise timekeeping.
 #include <chrono>
@@ -26,6 +27,12 @@
 //We need to configure it to use the Vulkan range of 0.0 to 1.0 using the GLM_FROCE_DEPTH_ZERO_TO_ONE defintion.
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
+
+//The hash functions are defined in the gtx folder, which means that it is techniacally still an experimental
+//extension to GLM. Therefore you need to define GLM_ENABLE_EXPPERTIMENTAL to use it. It means that the API could
+//change with a new version of GLM in the future, but in practive the API is very stable
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/hash.hpp>
 
 //Exposes functions that can be used to generate model transformations like glm::rotate, 
 //view transformations like glm::lookat
@@ -89,6 +96,16 @@ void main()
 //To solve that images aren't drawn over each other:
 //Sort all of the draw calls by depth from back to front(used for drawing transparent objects)
 //Depth testing
+
+//Possible extentions to the program:
+//Push constants
+//Instanced rendering
+//Dynamic uniforms
+//Separate images and sampler descriptors
+//Pipeline cache
+//Multi-threaded command buffer generation
+//Multiple subpasses
+//Compute shaders
 
 struct UniformBufferObject
 {
@@ -175,7 +192,26 @@ struct Vertex
 
 		return attributeDescriptions;
 	}
+
+	bool operator==(const Vertex& other) const
+	{
+		return Position == other.Position && Color == other.Color && TexCoord == other.TexCoord;
+	}
+
 };
+
+namespace std
+{
+	template<> struct hash<Vertex>
+	{
+		size_t operator()(Vertex const& vertex) const
+		{
+			return ((hash<glm::vec3>()(vertex.Position) ^ 
+				(hash<glm::vec3>()(vertex.Color) << 1)) >> 1) ^ 
+				(hash<glm::vec2>()(vertex.TexCoord) << 1);
+		}
+	};
+}
 
 struct SwapChainSupportDetails
 {
@@ -255,6 +291,7 @@ private:
 		CreateDescriptorSetLayout();
 		CreateGraphicsPipeline();
 		CreateCommandPool();
+		CreateColorResources();
 		CreateDepthResources();
 		CreateFrameBuffers();
 		CreateTextureImage();
@@ -285,6 +322,10 @@ private:
 	{
 		//Clean vulkan
 		CleanupSwapChain();
+
+		vkDestroyImageView(m_Device, m_ColorImageView, nullptr);
+		vkDestroyImage(m_Device, m_ColorImage, nullptr);
+		vkFreeMemory(m_Device, m_ColorImageMemory, nullptr);
 
 		vkDestroyImage(m_Device, m_DepthImage, nullptr);
 		vkDestroyImageView(m_Device, m_DepthImageView, nullptr);
@@ -512,6 +553,7 @@ private:
 			if (IsGpuSuitable(gpu))
 			{
 				m_PhysicalDevice = gpu;
+				m_msaaSamples = GetMaxUsableSampleCount();
 				//break;
 			}
 		}
@@ -656,6 +698,7 @@ private:
 		VkPhysicalDeviceFeatures deviceFeatures;
 		vkGetPhysicalDeviceFeatures(m_PhysicalDevice, &deviceFeatures);
 		deviceFeatures.samplerAnisotropy = VK_TRUE;
+		deviceFeatures.sampleRateShading = VK_TRUE; //enable sample shading feature for the device
 
 		createInfo.pEnabledFeatures = &deviceFeatures;
 
@@ -851,7 +894,7 @@ private:
 
 		for (size_t i = 0; i < m_SwapChainImages.size(); ++i)
 		{
-			m_SwapChainImageViews[i] = CreateImageView(m_SwapChainImages[i], m_SwapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT);
+			m_SwapChainImageViews[i] = CreateImageView(m_SwapChainImages[i], m_SwapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
 		}
 	}
 
@@ -968,9 +1011,9 @@ private:
 
 		VkPipelineMultisampleStateCreateInfo multiSampling = {};
 		multiSampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-		multiSampling.sampleShadingEnable = VK_FALSE;
-		multiSampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-		multiSampling.minSampleShading = 1.0f; //Optional
+		multiSampling.sampleShadingEnable = VK_TRUE; //Enable sanple shading in the pipeline
+		multiSampling.rasterizationSamples = m_msaaSamples;
+		multiSampling.minSampleShading = 0.2f; //Optional min fraction for sample shader: closer to one is smoother
 		multiSampling.pSampleMask = nullptr; //Optional
 		multiSampling.alphaToCoverageEnable = VK_FALSE; //Optional
 		multiSampling.alphaToOneEnable = VK_FALSE; //Optional
@@ -1179,7 +1222,7 @@ private:
 		//the format of the color attachment should match the format of the swap chain images.
 		//and we're not doing anything with multisampling yet, so we'll stick to 1 sample.
 		colorAttachment.format = m_SwapChainImageFormat;
-		colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		colorAttachment.samples = m_msaaSamples;
 
 		//The loadOp and storeOp determine what to do with the data in the attachment before rendering and after rendering.
 		//we have the following choices for loadOp:
@@ -1220,14 +1263,29 @@ private:
 		//The caveat of this special value is that the contents of the image are not guaranteed to be preserved, but that doesn't
 		//matter since we're going to clear it anywawy. We want the image to be ready for presentation using the swap chain
 		//after rendering, which is why we use VK_IMAGE_LAYOUT_PRESENT_SRC_KHR as finalLayout.
+		//MSAA: finalLayout --> VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+		//this change is because multisampled images cannot be presented directly.
+		//We first need to resolve them to a regular image. this requirement doest not apply to the depth buffer,
+		//since we won't be presented at any point. Therefore we will have to add onl one new attachment for color
+		//which is a so-called resolve attachment.
 		colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+		colorAttachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+		VkAttachmentDescription colorAttachmentResolve = {};
+		colorAttachmentResolve.format = m_SwapChainImageFormat;
+		colorAttachmentResolve.samples = VK_SAMPLE_COUNT_1_BIT;
+		colorAttachmentResolve.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		colorAttachmentResolve.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		colorAttachmentResolve.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		colorAttachmentResolve.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		colorAttachmentResolve.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		colorAttachmentResolve.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
 		VkAttachmentDescription depthAttachment = {};
 
 		//The format should be the same as the depth image itself.
 		depthAttachment.format = FindDepthFormat();
-		depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		depthAttachment.samples = m_msaaSamples;
 		depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 
 		//This time we don't care about storing the depth data, because it will not be used after drawing has finished.
@@ -1246,9 +1304,15 @@ private:
 		//Vulkan will automatically transition the attachment to this laoyut when the subpass is started.
 		//We inted to use the attachment to function as a color buffer and the VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL layout
 		//will give us the best performance, as its name implies
+
 		VkAttachmentReference colorAttachmentRef = {};
 		colorAttachmentRef.attachment = 0;
 		colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+		//MSAA: the render pass has to be instructed to resolve multisampled color image into regular attachment
+		VkAttachmentReference colorAttachmentResolveRef = {};
+		colorAttachmentResolveRef.attachment = 2;
+		colorAttachmentResolveRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
 		VkAttachmentReference depthAttachmentRef = {};
 		depthAttachmentRef.attachment = 1;
@@ -1271,6 +1335,7 @@ private:
 		//pResolveAttachments: attachments used for multisampling color attachments
 		//pDepthStencilAttachment: attachments for depth and stencil data
 		//pPreserveAttachments: attachments that are not used by this subpass, but for which the data must be preserved.
+		subpass.pResolveAttachments = &colorAttachmentResolveRef;
 
 		//the first 2 fields specify the indices of the dependency and the dependent subpass. The special value VK_SUBPASS_EXTERNAL refers to
 		//the implicit subpass before or after the render pass depending on whether it is specified in srcSubpass or dstSubpass.
@@ -1292,7 +1357,7 @@ private:
 		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
-		std::array<VkAttachmentDescription, 2> attachments = { colorAttachment, depthAttachment };
+		std::array<VkAttachmentDescription, 3> attachments = { colorAttachment, depthAttachment, colorAttachmentResolve };
 
 		VkRenderPassCreateInfo renderPassInfo = {};
 		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -1314,10 +1379,11 @@ private:
 
 		for (size_t i = 0; i < m_SwapChainImageViews.size(); ++i)
 		{
-			std::array<VkImageView, 2> attachements =
+			std::array<VkImageView, 3> attachements =
 			{
-				m_SwapChainImageViews[i],
-				m_DepthImageView
+				m_ColorImageView,
+				m_DepthImageView,
+				m_SwapChainImageViews[i]
 			};
 
 			//as you can see, creation of framebuffers is quite straightforward.
@@ -1707,6 +1773,8 @@ private:
 		//Viewport and scissor rectangles size is speciifed during graphics pipeline creation, so the pipeline
 		//also needs to be rebuilt. it is possible to avoid this by using dynamic state for the viewports and scissor rectangles.
 		CreateGraphicsPipeline();
+
+		CreateColorResources();
 
 		//The resolution of the depth buffer should change when the window is resized to match the new color attachment resolution.
 		CreateDepthResources();
@@ -2166,6 +2234,17 @@ private:
 		stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 		VkDeviceSize imageSize = texWidth * texHeight * 4; //4 -> rgba
 
+		//In Vulkan each of the mip images is stored in different mip levels of a VkImage.
+		//Mip level 0 is the original image, and the mip levels after level 0 are commonly referred to as the mip chain.
+		//The number of mip levels is specified when the VKImage is created.
+
+		//This calculates the number of levels in the mip chain.
+		//The max functions selects the largest dimension. 
+		//The log2 function calculates how many times that dimension can be divided by 2.
+		//The floor functoin handles case where the largest dimension is not a power of 2.
+		//1 is added so that the original image has a mip level.
+		m_MipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1;
+
 		if (!pixels)
 			throw std::runtime_error("failed to load texture image!");
 
@@ -2184,7 +2263,8 @@ private:
 		//clean up the original pixel array
 		stbi_image_free(pixels);
 
-		CreateImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_TextureImage, m_TextureImageMemory);
+		//We must inform Vulkan that we intend to use the texture image as both the source and destination of a transfer.
+		CreateImage(texWidth, texHeight, m_MipLevels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_TextureImage, m_TextureImageMemory);
 
 		//Copy the staging buffer to the texture image with 2 steps:
 		//Transition the texture image to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
@@ -2192,18 +2272,19 @@ private:
 
 		//The image was created with the VK_IMAGE_LAYOUT_UNDEFFINED layout, so that one should be specified as old layout 
 		//when transitioning textureImage.
-		TransitionImageLayout(m_TextureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		TransitionImageLayout(m_TextureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, m_MipLevels);
 		CopyBufferToImage(stagingBuffer, m_TextureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
 
+		GenerateMipMaps(m_TextureImage, VK_FORMAT_R8G8B8A8_UNORM, texWidth, texHeight, m_MipLevels);
 		//To be able to start sampling from the texture image in the shader, we need one last transition
 		//to prepare it for shader access.
-		TransitionImageLayout(m_TextureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		//TransitionImageLayout(m_TextureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, m_MipLevels);
 		vkDestroyBuffer(m_Device, stagingBuffer, nullptr);
 		vkFreeMemory(m_Device, stagingBufferMemory, nullptr);
 
 	}
 
-	void CreateImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory)
+	void CreateImage(uint32_t width, uint32_t height, uint32_t mipLevels, VkSampleCountFlagBits numSamples, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory)
 	{
 		VkImageCreateInfo imageInfo = {};
 		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -2261,8 +2342,10 @@ private:
 		//where only certain regions are actually backed by memory. If you were using a 3D texture for a voxel terrain,
 		//for example, then you could use this to avoid allocating memory to store large volumes of "air" values.
 		//We won't be using it in this tutorial, so leave it to its default 0 value.
-		imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+		imageInfo.samples = numSamples;
 		imageInfo.flags = 0; //Optional
+
+		imageInfo.mipLevels = mipLevels;
 
 		if (vkCreateImage(m_Device, &imageInfo, nullptr, &image) != VK_SUCCESS)
 			throw std::runtime_error("failed to create image!");
@@ -2335,7 +2418,7 @@ private:
 		vkFreeCommandBuffers(m_Device, m_CommandPool, 1, &commandBuffer);
 	}
 
-	void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout)
+	void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels)
 	{
 		VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
 
@@ -2363,7 +2446,7 @@ private:
 		barrier.image = image;
 		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		barrier.subresourceRange.baseMipLevel = 0;
-		barrier.subresourceRange.levelCount = 1;
+		barrier.subresourceRange.levelCount = mipLevels;
 		barrier.subresourceRange.baseArrayLayer = 0;
 		barrier.subresourceRange.layerCount = 1;
 
@@ -2430,7 +2513,14 @@ private:
 			sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 			destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
 		}
-
+		else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+		{
+			barrier.srcAccessMask = 0;
+			barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+			
+			sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			destinationStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		}
 		else
 			throw std::invalid_argument("unsupported layout transition!");
 
@@ -2497,10 +2587,10 @@ private:
 	{
 		//The code for this function can be based directly on CreateImageViews.
 		//The only 2 changes you have to make are the format and the image
-		m_TextureImageView = CreateImageView(m_TextureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
+		m_TextureImageView = CreateImageView(m_TextureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, m_MipLevels);
 	}
 
-	VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags)
+	VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels)
 	{
 		VkImageViewCreateInfo viewInfo = {};
 		viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -2523,7 +2613,7 @@ private:
 		//Our images will be used as color targets without any mipmapping levels or multiple layers.
 		viewInfo.subresourceRange.aspectMask = aspectFlags;
 		viewInfo.subresourceRange.baseMipLevel = 0;
-		viewInfo.subresourceRange.levelCount = 1;
+		viewInfo.subresourceRange.levelCount = mipLevels;
 		viewInfo.subresourceRange.baseArrayLayer = 0;
 		viewInfo.subresourceRange.layerCount = 1;
 
@@ -2591,7 +2681,7 @@ private:
 		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
 		samplerInfo.mipLodBias = 0.0f;
 		samplerInfo.minLod = 0.0f;
-		samplerInfo.maxLod = 0.0f;
+		samplerInfo.maxLod = static_cast<float>(m_MipLevels);
 
 		//Note that the sampler does not reference a VkImage anywhere. The sampler is a distinct object
 		//that provides an interface to extract colors from a texture.
@@ -2616,12 +2706,12 @@ private:
 		//VK_FORMAT_D24_UNORM_S8_UINT: 24-bit float for depth and 8 bit stencil component
 		//The stencil component is used for stencil tests, which is an additional test that can be combined with depth testing.
 		VkFormat depthFormat = FindDepthFormat();
-		CreateImage(m_SwapChainExtent.width, m_SwapChainExtent.height, depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_DepthImage, m_DepthImageMemory);
-		m_DepthImageView = CreateImageView(m_DepthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+		CreateImage(m_SwapChainExtent.width, m_SwapChainExtent.height, 1, m_msaaSamples, depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_DepthImage, m_DepthImageMemory);
+		m_DepthImageView = CreateImageView(m_DepthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
 
 		//The undefined layout can be used as initial layout, becasue there are no existing depth image contets that matter.
 		//We need to update some of the logic in transitionImageLayout to use the right subrouse aspect.
-		TransitionImageLayout(m_DepthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+		TransitionImageLayout(m_DepthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1);
 
 	}
 
@@ -2682,6 +2772,8 @@ private:
 		if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warning, &err, MODEL_PATH.c_str()))
 			throw std::runtime_error(err);
 
+		std::unordered_map<Vertex, uint32_t> uniqueVertices = {};
+
 		for (const tinyobj::shape_t& shape : shapes)
 		{
 			for (const tinyobj::index_t& index : shape.mesh.indices)
@@ -2706,15 +2798,169 @@ private:
 				vertex.TexCoord =
 				{
 					attrib.texcoords[2 * index.texcoord_index + 0],
+
+					//OpenGL expects the top to be 0 while vulkan expect it to be the bottom
 					1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
 				};
 
 				vertex.Color = { 1.0f, 1.0f, 1.0f };
 
-				m_Vertices.push_back(vertex);
-				m_Indices.push_back(m_Indices.size());
+				//Every time we read a vertex from the OBJ file, we check if we've already seen a vertex
+				//with the exact same position and textrue coordinates before. if not, we add it to vertices
+				//and store its index in the uniqueVertices container. after that we add the index of the new vertex
+				//to indices. if We've seen the exact same vertex before, then we look up its index in uniqueVertices and store
+				//that index in m_Indices.
+				if (uniqueVertices.count(vertex) == 0)
+				{
+					uniqueVertices[vertex] = static_cast<uint32_t>(m_Vertices.size());
+					m_Vertices.push_back(vertex);
+				}
+				
+				m_Indices.push_back(uniqueVertices[vertex]);
 			}
 		}
+	}
+
+	void GenerateMipMaps(VkImage image, VkFormat format, int32_t texWidth, int32_t texHeight, uint32_t mipLevels)
+	{
+		//Check if image formt supports linear blitting
+		//The VkFormatProperties has 3 fields named linearTilingFeatures, optimalTilingFeatures and bufferFeatues.
+		//that each describe how the format can be used depending on the way it is used. we create a texture image
+		//with the optimal tiling format, so we need to check optimalTilingFeatures. //Support for the linear filtering feature
+		//can bechecked with the VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT.
+		VkFormatProperties formatProps;
+		vkGetPhysicalDeviceFormatProperties(m_PhysicalDevice, format, &formatProps);
+
+		//There are 2 alternatives in this case. You could implement a function that searches common texture image
+		//formats for one that does support linear blitting, or you could implement the mipmap generation in software
+		//with a library like stb_image_resize. Each mip level can then be loaded into the image in the same way 
+		//that you loaded the orignal image.
+
+		//It should be noted that it is uncommon in practice to generate the mipmap levels at runtime anywah.
+		//Usually they are pregenerated and stored in the texture file alongside the base level to improve loading speed.
+		//Implmenting resizing in software and loading multiple levels from a file is left as an exercise to the reader.
+		if (!(formatProps.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
+			throw std::runtime_error("texture image format does not support linear blitting!");
+
+		VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
+
+		VkImageMemoryBarrier barrier = {};
+		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		barrier.image = image;
+		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		barrier.subresourceRange.baseArrayLayer = 0;
+		barrier.subresourceRange.layerCount = 1;
+		barrier.subresourceRange.levelCount = 1;
+
+		int32_t mipWidth = texWidth;
+		int32_t mipHeight = texHeight;
+		
+		for (uint32_t i = 1; i < mipLevels; ++i)
+		{
+			//First, we transition level i - 1 to VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL.
+			//THis transition will wait for level i - 1 to be filled, either from the previous blit command
+			//or from vkCmdCopyBufferToImage. The current blit command will wait on this transition
+			barrier.subresourceRange.baseMipLevel = i - 1;
+			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+			//Next, we specify the regoins that will be used in the blit operation.
+			//The source mip level is i - 1 and the destination mip level is i.
+			//The 2 elements of the srcOffsets array determine the 3D region that data will be blitted from
+			//dstOffsets determines the region that data will be blitted to.
+			//The x and y dimensions of the dstOffsets[1] are divided by 2 since each mip level is half the size of the previous level.
+			//The z dimension of srcOffsets[1] and dstOffsets[1] must be 1, since a 2D image has a depth of 1.
+			VkImageBlit blit = {};
+			blit.srcOffsets[0] = { 0,0,0 };
+			blit.srcOffsets[1] = { mipWidth, mipHeight, 1 };
+			blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			blit.srcSubresource.mipLevel = i - 1;
+			blit.srcSubresource.baseArrayLayer = 0;
+			blit.srcSubresource.layerCount = 1;
+			blit.dstOffsets[0] = { 0,0,0 };
+			blit.dstOffsets[1] = { mipWidth > 1 ? static_cast<int32_t>(mipWidth * 0.5f) : 1, mipHeight > 1 ? static_cast<int32_t>(mipHeight * 0.5f) : 1, 1 };
+			blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			blit.dstSubresource.mipLevel = i;
+			blit.dstSubresource.baseArrayLayer = 0;
+			blit.dstSubresource.layerCount = 1;
+
+			//Now we record the blit command. Note that m_TextureImage is used for both srcImage and dstImage parameter.
+			//This is because we're blitting between different levels of the same image.
+			//The source mip level was just transitioned to VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL and
+			//the destination level is still in VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL from CreateTextureImage.
+			//The last parameter allows us to specify a VkFilter to use in the blit. we have the same filtering options
+			//here that we had when making the VkSampler. We use the VK_FILTER_LINEAR to enable interpolation.
+			vkCmdBlitImage(commandBuffer, 
+				image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
+				1, &blit, VK_FILTER_LINEAR);
+
+			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+			//This barrier transitions mip level i - 1 to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL.
+			//This transition waits on the current blit command to finish. All sampling operations will wait on this transiton to finish.
+			vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+			if (mipWidth > 1) mipWidth /= 2;
+			if (mipHeight > 1) mipHeight /= 2;
+		}
+
+		//before we end the command buffer, we insert one more pipeline barrier. This barrier transitions the last
+		//mip level from VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL. 
+		//This wasn't handled by the loop, since the last mip level is never blitted from
+		barrier.subresourceRange.baseMipLevel = m_MipLevels - 1;
+		barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+		vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+		EndSingleTimeCommands(commandBuffer);
+	}
+
+	VkSampleCountFlagBits GetMaxUsableSampleCount()
+	{
+		VkPhysicalDeviceProperties physicalDeviceProperties;
+		vkGetPhysicalDeviceProperties(m_PhysicalDevice, &physicalDeviceProperties);
+
+		VkSampleCountFlags counts = std::min(physicalDeviceProperties.limits.framebufferColorSampleCounts, physicalDeviceProperties.limits.framebufferDepthSampleCounts);
+		if (counts & VK_SAMPLE_COUNT_64_BIT)
+			return VK_SAMPLE_COUNT_64_BIT;
+		else if (counts & VK_SAMPLE_COUNT_32_BIT)
+			return VK_SAMPLE_COUNT_32_BIT;
+		else if (counts & VK_SAMPLE_COUNT_8_BIT)
+			return VK_SAMPLE_COUNT_8_BIT;
+		else if (counts & VK_SAMPLE_COUNT_4_BIT)
+			return VK_SAMPLE_COUNT_4_BIT;
+		else if (counts & VK_SAMPLE_COUNT_2_BIT)
+			return VK_SAMPLE_COUNT_2_BIT;
+
+		return VK_SAMPLE_COUNT_1_BIT;
+	}
+
+	void CreateColorResources()
+	{
+		VkFormat colorFormat = m_SwapChainImageFormat;
+
+		CreateImage(m_SwapChainExtent.width, m_SwapChainExtent.height, 1,
+			m_msaaSamples, colorFormat,
+			VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
+			m_ColorImage, m_ColorImageMemory);
+
+		m_ColorImageView = CreateImageView(m_ColorImage, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+
+		TransitionImageLayout(m_ColorImage, colorFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1);
 	}
 
 private:
@@ -2755,6 +3001,7 @@ private:
 	std::vector<VkDeviceMemory> m_UniformBuffersMemory;
 	VkDescriptorPool m_DescriptorPool;
 	std::vector<VkDescriptorSet> m_DescriptorSets;
+	uint32_t m_MipLevels;
 	VkImage m_TextureImage;
 	VkDeviceMemory m_TextureImageMemory;
 	VkImageView m_TextureImageView;
@@ -2764,6 +3011,19 @@ private:
 	VkImage m_DepthImage;
 	VkDeviceMemory m_DepthImageMemory;
 	VkImageView m_DepthImageView;
+
+	VkSampleCountFlagBits m_msaaSamples = VK_SAMPLE_COUNT_1_BIT;
+
+	//In MSAA, each pixel is sampled in an offscreen buffer which is then rendered to the screen.
+	//This new buffer is silghtly different from regular images we've been rendering to, 
+	//they have to be able to store more than one sample per pixel. Once a multisampled buffer is created,
+	// it has to be resolved to the default framebuffer (which stores only a single sample per pixel). 
+	//This is why we have to create an additional render target and modifgy our current drawing procsess.
+	//We only need one render target since only one drawing operation is actie at a time, just like with
+	//the depth buffer.
+	VkImage m_ColorImage;
+	VkDeviceMemory m_ColorImageMemory;
+	VkImageView m_ColorImageView;
 
 	const std::vector<const char*> m_ValidationLayers = { "VK_LAYER_LUNARG_standard_validation" };
 	const std::vector<const char*> m_DeviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
@@ -2825,7 +3085,7 @@ private:
 
 };
 
-int program()
+int Program()
 {
 	HelloTriangleApplication app;
 
@@ -2844,7 +3104,7 @@ int program()
 
 int main()
 {
-	int errCode = program();
+	int errCode = Program();
 	std::cin.get();
 	return errCode;
 }
