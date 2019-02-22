@@ -130,6 +130,18 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Core\main.cpp" />
+    <ClCompile Include="Core\Window.cpp" />
+    <ClCompile Include="Vulkan\LogicalDevice.cpp" />
+    <ClCompile Include="Vulkan\PhysicalDevice.cpp" />
+    <ClCompile Include="Vulkan\Surface.cpp" />
+    <ClCompile Include="Vulkan\VulkanInstance.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Core\Window.h" />
+    <ClInclude Include="Vulkan\LogicalDevice.h" />
+    <ClInclude Include="Vulkan\PhysicalDevice.h" />
+    <ClInclude Include="Vulkan\Surface.h" />
+    <ClInclude Include="Vulkan\VulkanInstance.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
