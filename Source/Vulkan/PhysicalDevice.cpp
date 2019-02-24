@@ -1,5 +1,7 @@
 #include "PhysicalDevice.h"
 
+#include <algorithm>
+
 #include "Surface.h"
 
 PhysicalDevice::PhysicalDevice(Surface* pSurface, const VkPhysicalDevice& device, std::set<std::string>& requiredExtensions) :
@@ -181,4 +183,23 @@ SwapChainSupportDetails PhysicalDevice::FindSwapChainSupport() const
 	}
 
 	return details;
+}
+
+VkSampleCountFlagBits PhysicalDevice::GetMaxUsableSampleCount() const
+{
+	const VkPhysicalDeviceProperties physicalDeviceProperties = m_Desc.Properties;
+
+	VkSampleCountFlags counts = std::min(physicalDeviceProperties.limits.framebufferColorSampleCounts, physicalDeviceProperties.limits.framebufferDepthSampleCounts);
+	if (counts & VK_SAMPLE_COUNT_64_BIT)
+		return VK_SAMPLE_COUNT_64_BIT;
+	else if (counts & VK_SAMPLE_COUNT_32_BIT)
+		return VK_SAMPLE_COUNT_32_BIT;
+	else if (counts & VK_SAMPLE_COUNT_8_BIT)
+		return VK_SAMPLE_COUNT_8_BIT;
+	else if (counts & VK_SAMPLE_COUNT_4_BIT)
+		return VK_SAMPLE_COUNT_4_BIT;
+	else if (counts & VK_SAMPLE_COUNT_2_BIT)
+		return VK_SAMPLE_COUNT_2_BIT;
+
+	return VK_SAMPLE_COUNT_1_BIT;
 }

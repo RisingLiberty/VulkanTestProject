@@ -42,7 +42,7 @@ public:
 
 	bool IsSuitable() const;
 	bool CheckDeviceExtensionSupport(std::set<std::string>& requiredExtensions) const;
-
+	VkSampleCountFlagBits GetMaxUsableSampleCount() const;
 	int RateSuitability() const;
 
 	VkPhysicalDevice GetDevice() const { return m_Device; }
