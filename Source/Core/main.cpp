@@ -36,7 +36,7 @@
 
 //Exposes functions that can be used to generate model transformations like glm::rotate, 
 //view transformations like glm::lookat
-//proj transformatoin like glm::perspective.
+//proj transformation like glm::perspective.
 #include <glm/gtc/matrix_transform.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -52,6 +52,10 @@
 #include "../Vulkan/Surface.h"
 #include "../Vulkan/PhysicalDevice.h"
 #include "../Vulkan/LogicalDevice.h"
+#include "../Vulkan/SwapChain.h"
+#include "../Vulkan/RenderPass.h"
+
+#include "../Help/HelperMethods.h"
 
 //Create different queue family specifically for transfer operatinos. It will require you the following changes:
 //1) Modify QueueFamilyIndices and FindQueueFamilies to explicitly look for a queue family with the VK_QUEUE_TRANSFER bit,
@@ -113,13 +117,6 @@ void main()
 //Multi-threaded command buffer generation
 //Multiple subpasses
 //Compute shaders
-
-struct UniformBufferObject
-{
-	glm::mat4 Model;
-	glm::mat4 View;
-	glm::mat4 Proj;
-};
 
 struct Vertex
 {
@@ -263,24 +260,22 @@ private:
 	{
 		PickPhysicalDevice();
 		m_UniqueCpu = std::make_unique<LogicalDevice>(m_UniqueInstance.get(), m_UniqueGpu.get(), m_DeviceExtensions, m_ValidationLayers);
-
-		//CreateLogicalDevice();
-		CreateSwapChain();
-		CreateImageViews();
-		CreateRenderPass();
+		m_UniqueSwapChain = std::make_unique<SwapChain>(m_UniqueGpu.get(), m_UniqueWindow.get(), m_UniqueSurface.get(), m_UniqueCpu.get());
+		m_UniqueSwapChain->CreateImageViews();
+		m_UniqueRenderPass = std::make_unique<RenderPass>(m_UniqueCpu.get(), m_UniqueSwapChain.get(), m_UniqueGpu.get());
 		CreateDescriptorSetLayout();
 		CreateGraphicsPipeline();
 		CreateCommandPool();
 		CreateColorResources();
 		CreateDepthResources();
-		CreateFrameBuffers();
+		m_UniqueSwapChain->CreateFrameBuffers(m_UniqueRenderPass->GetRenderPass(), m_ColorImageView, m_DepthImageView);
 		CreateTextureImage();
 		CreateTextureImageView();
 		CreateTextureSampler();
 		LoadModel();
 		CreateVertexBuffer();
 		CreateIndexBuffer();
-		CreateUniformBuffer();
+		m_UniqueSwapChain->CreateUniformBuffer();
 		CreateDescriptorPool();
 		CreateDescriptorSets();
 		CreateCommandBuffers();
@@ -322,12 +317,6 @@ private:
 
 		vkDestroyDescriptorSetLayout(m_UniqueCpu->GetDevice(), m_DescriptorSetLayout, nullptr);
 
-		for (size_t i = 0; i < m_SwapChainImages.size(); ++i)
-		{
-			vkDestroyBuffer(m_UniqueCpu->GetDevice(), m_UniformBuffers[i], nullptr);
-			vkFreeMemory(m_UniqueCpu->GetDevice(), m_UniformBuffersMemory[i], nullptr);
-		}
-
 		vkDestroyBuffer(m_UniqueCpu->GetDevice(), m_IndexBuffer, nullptr);
 		vkFreeMemory(m_UniqueCpu->GetDevice(), m_IndexBufferMemory, nullptr);
 
@@ -342,59 +331,8 @@ private:
 		}
 
 		vkDestroyCommandPool(m_UniqueCpu->GetDevice(), m_CommandPool, nullptr);
-		//vkDestroyDevice(m_UniqueCpu->GetDevice(), nullptr);
 
-		//if (m_EnableValidationLayers)
-		//	DestroyDebugUtilsMessengerEXT(m_UniqueInstance->GetInstance(), m_Callback, nullptr);
-
-		//vkDestroyInstance(m_Instance, nullptr);
-
-		//Clean glfw
-		//glfwDestroyWindow(m_pWindow);
 		glfwTerminate();
-	}
-
-	void ShowExtentions()
-	{
-		uint32_t extensionCount = 0;
-		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-
-		std::vector<VkExtensionProperties> extensions(extensionCount);
-
-		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
-
-		std::cout << "available extensions: " << std::endl;
-
-		for (const VkExtensionProperties extension : extensions)
-			std::cout << "\t" << extension.extensionName << std::endl;
-	}
-
-	bool CheckValidationLayerSupport()
-	{
-		uint32_t layerCount;
-		vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
-
-		std::vector<VkLayerProperties> availableLayers(layerCount);
-		vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
-
-		for (const char* layerName : m_ValidationLayers)
-		{
-			bool layerFound = false;
-
-			for (const VkLayerProperties& layerProps : availableLayers)
-			{
-				if (strcmp(layerName, layerProps.layerName) == 0)
-				{
-					layerFound = true;
-					break;
-				}
-			}
-
-			if (!layerFound)
-				return false;
-		}
-
-		return true;
 	}
 
 	std::vector<VkPhysicalDevice> FindGpus()
@@ -449,237 +387,9 @@ private:
 		else
 			throw std::runtime_error("failed to find a suitable GPU!");
 		
-		m_msaaSamples = GetMaxUsableSampleCount();
+//		m_UniqueRenderPass->SetSamplesCount(GetMaxUsableSampleCount());
 
 		std::cout << "Using: " << m_UniqueGpu->GetDesc().Properties.deviceName << std::endl;
-	}
-
-//	void CreateLogicalDevice()
-//	{
-//		const QueueFamilyIndices indices = m_UniqueGpu->GetDesc().QueueIndices;
-//
-//		std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
-//		std::set<int> uniqueQueueFamilies = { indices.GraphicsFamily, indices.PresentFamily };
-//
-//		float queuePriority = 1.0f;
-//
-//		for (int queueFamiliy : uniqueQueueFamilies)
-//		{
-//			VkDeviceQueueCreateInfo queueCreateInfo = {};
-//			queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-//			queueCreateInfo.queueFamilyIndex = indices.GraphicsFamily;
-//			queueCreateInfo.queueCount = 1;
-//			queueCreateInfo.pQueuePriorities = &queuePriority;
-//
-//			//check if this should change to push_back
-//			queueCreateInfos.emplace_back(queueCreateInfo);
-//		}
-//
-//		VkDeviceCreateInfo createInfo = {};
-//		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-//		createInfo.pQueueCreateInfos = queueCreateInfos.data();
-//		createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
-//
-//
-//		VkPhysicalDeviceFeatures& deviceFeatures = m_UniqueGpu->GetDescRef().Features;
-//		deviceFeatures.samplerAnisotropy = VK_TRUE;
-//		deviceFeatures.sampleRateShading = VK_TRUE; //enable sample shading feature for the device
-//
-//		createInfo.pEnabledFeatures = &deviceFeatures;
-//
-//		createInfo.enabledExtensionCount = static_cast<uint32_t>(m_UniqueCpu->GetDevice()Extensions.size());
-//		createInfo.ppEnabledExtensionNames = m_UniqueCpu->GetDevice()Extensions.data();
-//
-//#ifdef NDEBUG
-//		bool m_EnableValidationLayers = false;
-//#else
-//		bool m_EnableValidationLayers = true;
-//#endif
-//		if (m_EnableValidationLayers)
-//		{
-//			createInfo.enabledLayerCount = static_cast<uint32_t>(m_ValidationLayers.size());
-//			createInfo.ppEnabledLayerNames = m_ValidationLayers.data();
-//		}
-//		else
-//			createInfo.enabledLayerCount = 0;
-//
-//		if (vkCreateDevice(m_UniqueGpu->GetDevice(), &createInfo, nullptr, &m_UniqueCpu->GetDevice()) != VK_SUCCESS)
-//			throw std::runtime_error("failed to create logical device!");
-//
-//		vkGetDeviceQueue(m_UniqueCpu->GetDevice(), indices.GraphicsFamily, 0, &m_GraphicsQueue);
-//		vkGetDeviceQueue(m_UniqueCpu->GetDevice(), indices.GraphicsFamily, 0, &m_PresentQueue);
-//	}
-
-	bool CheckDeviceExtensionSupport(VkPhysicalDevice device)
-	{
-		uint32_t extensionsCount;
-		vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionsCount, nullptr);
-
-		std::vector<VkExtensionProperties> availableExtensions(extensionsCount);
-		vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionsCount, availableExtensions.data());
-
-		std::set<std::string> requiredExtensions(m_DeviceExtensions.begin(), m_DeviceExtensions.end());
-
-		for (const VkExtensionProperties& extension : availableExtensions)
-			requiredExtensions.erase(extension.extensionName);
-
-		return requiredExtensions.empty();
-	}
-
-	SwapChainSupportDetails FindSwapChainSupport(VkPhysicalDevice device)
-	{
-		SwapChainSupportDetails details;
-		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, m_UniqueSurface->GetSurface(), &details.Capabilities);
-
-		uint32_t formatCount;
-		vkGetPhysicalDeviceSurfaceFormatsKHR(device, m_UniqueSurface->GetSurface(), &formatCount, nullptr);
-
-		if (formatCount != 0)
-		{
-			details.Formats.resize(formatCount);
-			vkGetPhysicalDeviceSurfaceFormatsKHR(device, m_UniqueSurface->GetSurface(), &formatCount, details.Formats.data());
-		}
-
-		uint32_t presentModeCount;
-		vkGetPhysicalDeviceSurfacePresentModesKHR(device, m_UniqueSurface->GetSurface(), &presentModeCount, nullptr);
-
-		if (presentModeCount != 0)
-		{
-			details.PresentModes.resize(presentModeCount);
-			vkGetPhysicalDeviceSurfacePresentModesKHR(device, m_UniqueSurface->GetSurface(), &presentModeCount, details.PresentModes.data());
-		}
-
-		return details;
-	}
-
-	VkSurfaceFormatKHR ChooseSwapChainSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats)
-	{
-		if (availableFormats.size() == 1 && availableFormats[0].format == VK_FORMAT_UNDEFINED)
-			return { VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
-
-		for (const VkSurfaceFormatKHR& availableFormat : availableFormats)
-		{
-			if (availableFormat.format == VK_FORMAT_B8G8R8A8_UNORM && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
-				return availableFormat;
-		}
-
-		return availableFormats[0];
-	}
-
-	VkPresentModeKHR ChooseSwapChainPresentMode(const std::vector<VkPresentModeKHR> availablePresentModes)
-	{
-		VkPresentModeKHR bestMode = VK_PRESENT_MODE_FIFO_KHR;
-
-		for (const VkPresentModeKHR& availablePresentMode : availablePresentModes)
-		{
-			if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
-				return availablePresentMode;
-			else if (availablePresentMode == VK_PRESENT_MODE_IMMEDIATE_KHR)
-				bestMode = availablePresentMode;
-		}
-
-		return bestMode;
-	}
-
-	VkExtent2D ChooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities)
-	{
-		if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
-			return capabilities.currentExtent;
-
-		else
-		{
-			int width, height;
-			glfwGetFramebufferSize(m_UniqueWindow->GetGLFWWindow(), &width, &height);
-
-			VkExtent2D actualtExtent = {
-				static_cast<uint32_t>(width),
-				static_cast<uint32_t>(height)
-			};
-
-			return actualtExtent;
-		}
-	}
-
-	void CreateSwapChain()
-	{
-		const SwapChainSupportDetails swapChainSupport = m_UniqueGpu->GetDesc().SwapChainSupportDetails;
-
-		VkSurfaceFormatKHR surfaceFormat = ChooseSwapChainSurfaceFormat(swapChainSupport.Formats);
-		VkPresentModeKHR presentMode = ChooseSwapChainPresentMode(swapChainSupport.PresentModes);
-		VkExtent2D extent = ChooseSwapExtent(swapChainSupport.Capabilities);
-
-		uint32_t imageCount = swapChainSupport.Capabilities.minImageCount + 1;
-		if (swapChainSupport.Capabilities.minImageCount > 0 && imageCount > swapChainSupport.Capabilities.maxImageCount)
-			imageCount = swapChainSupport.Capabilities.maxImageCount;
-
-		VkSwapchainCreateInfoKHR createInfo = {};
-		createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-		createInfo.surface = m_UniqueSurface->GetSurface();
-
-		createInfo.minImageCount = imageCount;
-		createInfo.imageFormat = surfaceFormat.format;
-		createInfo.imageColorSpace = surfaceFormat.colorSpace;
-		createInfo.imageExtent = extent;
-		createInfo.imageArrayLayers = 1;
-		createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-		const QueueFamilyIndices indices = m_UniqueGpu->GetDesc().QueueIndices;
-		uint32_t queueFamilyIndices[] = { (uint32_t)indices.GraphicsFamily, (uint32_t)indices.PresentFamily };
-
-		if (indices.GraphicsFamily != indices.PresentFamily)
-		{
-			createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-			createInfo.queueFamilyIndexCount = 2;
-			createInfo.pQueueFamilyIndices = queueFamilyIndices;
-		}
-		else
-		{
-			createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-			createInfo.queueFamilyIndexCount = 0; //optional
-			createInfo.pQueueFamilyIndices = nullptr; //optional
-		}
-
-		//We can specify that a certain transform should be applied to images in the swap chain if 
-		//it is supported (supportedTransforms in capabilities), like a 90 degree clockwise rotation
-		//or horizontal flip. to specify that you do not want any transformation, simply specify the current transformation.
-		createInfo.preTransform = swapChainSupport.Capabilities.currentTransform;
-
-		//The compositeAplha field specifies if the alpha channel should be used for blending with other windows in the window system
-		//You'll almost always want to simly ignore the alpha channel hence VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR.
-		createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-
-		//The presentmode member speaks for itself. if the clipped member is set to VK_TRUE then that means that we don't
-		//care about the color of pixels that are obscured, for example because another window is in front of them.
-		//Unless you really need to be able to read these pixels back and get predictable results, you'll get the best 
-		//performance by enabling clipping.
-		createInfo.presentMode = presentMode;
-		createInfo.clipped = VK_TRUE;
-
-		//That leaves one last field, oldSwapChain. with Vulakn it's possible that your swap chain becomes invalid or unoptimized,
-		//while your application is running, for example because the window was resized. In that case the swap chain actually,
-		//needs to be recreated from scratch and a reference to the old one must be specified in this field.
-		//This is a complex topic that we'll learn more about in a future chapter. For now we'll assume that we'll only ever create one swap chain.
-		createInfo.oldSwapchain = VK_NULL_HANDLE;
-
-		if (vkCreateSwapchainKHR(m_UniqueCpu->GetDevice(), &createInfo, nullptr, &m_SwapChain) != VK_SUCCESS)
-			throw std::runtime_error("failed to create swap chain!");
-
-		vkGetSwapchainImagesKHR(m_UniqueCpu->GetDevice(), m_SwapChain, &imageCount, nullptr);
-		m_SwapChainImages.resize(imageCount);
-		vkGetSwapchainImagesKHR(m_UniqueCpu->GetDevice(), m_SwapChain, &imageCount, m_SwapChainImages.data());
-
-		m_SwapChainImageFormat = surfaceFormat.format;
-		m_SwapChainExtent = extent;
-	}
-
-	void CreateImageViews()
-	{
-		m_SwapChainImageViews.resize(m_SwapChainImages.size());
-
-		for (size_t i = 0; i < m_SwapChainImages.size(); ++i)
-		{
-			m_SwapChainImageViews[i] = CreateImageView(m_SwapChainImages[i], m_SwapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
-		}
 	}
 
 	void CreateGraphicsPipeline()
@@ -738,14 +448,14 @@ private:
 		VkViewport viewport = {};
 		viewport.x = 0.0f;
 		viewport.y = 0.0f;
-		viewport.width = (float)m_SwapChainExtent.width;
-		viewport.height = (float)m_SwapChainExtent.height;
+		viewport.width = (float)m_UniqueSwapChain->GetExtent().width;
+		viewport.height = (float)m_UniqueSwapChain->GetExtent().height;
 		viewport.minDepth = 0.0f;
 		viewport.maxDepth = 1.0f;
 
 		VkRect2D scissor = {};
 		scissor.offset = { 0,0 };
-		scissor.extent = m_SwapChainExtent;
+		scissor.extent = m_UniqueSwapChain->GetExtent();
 
 		VkPipelineViewportStateCreateInfo viewportState = {};
 		viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
@@ -796,7 +506,7 @@ private:
 		VkPipelineMultisampleStateCreateInfo multiSampling = {};
 		multiSampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 		multiSampling.sampleShadingEnable = VK_TRUE; //Enable sanple shading in the pipeline
-		multiSampling.rasterizationSamples = m_msaaSamples;
+		multiSampling.rasterizationSamples = m_UniqueRenderPass->GetSamplesCount();
 		multiSampling.minSampleShading = 0.2f; //Optional min fraction for sample shader: closer to one is smoother
 		multiSampling.pSampleMask = nullptr; //Optional
 		multiSampling.alphaToCoverageEnable = VK_FALSE; //Optional
@@ -954,7 +664,7 @@ private:
 		//It is also possible to use other render passes with this pipeline instead of this specific instance,
 		//but they have to be compatible with renderPass.
 		//The requirements for caompatibilty are described here <https://www.khronos.org/registry/vulkan/specs/1.0/html/vkspec.html#renderpass-compatibility>, but we wo'nt be using that feauture
-		pipelineInfo.renderPass = m_RenderPass;
+		pipelineInfo.renderPass = m_UniqueRenderPass->GetRenderPass();
 		pipelineInfo.subpass = 0;
 
 		//there are actually 2 more parameters, basePipelineHandle and basePielineIndex.
@@ -999,202 +709,6 @@ private:
 		return shaderModule;
 	}
 
-	void CreateRenderPass()
-	{
-		VkAttachmentDescription colorAttachment = {};
-
-		//the format of the color attachment should match the format of the swap chain images.
-		//and we're not doing anything with multisampling yet, so we'll stick to 1 sample.
-		colorAttachment.format = m_SwapChainImageFormat;
-		colorAttachment.samples = m_msaaSamples;
-
-		//The loadOp and storeOp determine what to do with the data in the attachment before rendering and after rendering.
-		//we have the following choices for loadOp:
-		//VK_ATTACHMENT_LOAD_OP_LOAD: Preserve the existing contents of the attachement
-		//VK_ATTACHMENT_LOAD_OP_CLEAR: Clear the values to a constant at the start
-		//VK_ATTACHMENT_LOAD_OP_DONT_CARE: Existing contents are undefined; we don't care about them.
-
-		//We're going to clear the framebuffer to black before drawing a new frame so we use the clear option
-		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-
-		//There are only 2 possiblities for the storeOp:
-		//VK_ATTACHMENT_STORE_OP_STORE: Rendered contents will be stored in memory and can be read later.
-		//VK_ATTACHMENT_STORE_OP_DONT_CARE: Contents of the framebuffer will be undefined after rendering operation.
-
-		//We're interested in seeing the rendered triangle on the screen, so we're going with the store operation here.
-		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-
-		//The loadOp and storeOp apply to color and depth data, and stencilLoadOp / stencilStoreOp apply to stencil data.
-		//Our applocation won't do anything with the stencil buffer, so the results of loading and storing are irrelevant.
-		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-		colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-
-		//Textures and framebuffers in Vulkan are represented by VkImage objects with a certai pixel format,
-		//however the layout of the pixels in memory can change based on what you're trying to do with an image.
-
-		//Some of the most common layouts are:
-		//VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL: Images used as color attachment
-		//VK_IMAGE_LAYOUT_PRESENT_SRC_KHR: images to be presented in the swap chain.
-		//VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: images to be used as destination for a memory copy operation
-
-		//Others:
-		//VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL: Optimal as source in a transfer operation
-		//VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: Optimal for sampling from a shader
-
-		//The initialLayout specifies which layout the image will have before the render pass begins.
-		//The finalLayout specifies the layout to automatically transition to when the render pass finishes.
-		//Using VK_IMAGE_LAYOUT_UNDEFINED for initalLayout means that we don't care what previous layout the image was in.
-		//The caveat of this special value is that the contents of the image are not guaranteed to be preserved, but that doesn't
-		//matter since we're going to clear it anywawy. We want the image to be ready for presentation using the swap chain
-		//after rendering, which is why we use VK_IMAGE_LAYOUT_PRESENT_SRC_KHR as finalLayout.
-		//MSAA: finalLayout --> VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-		//this change is because multisampled images cannot be presented directly.
-		//We first need to resolve them to a regular image. this requirement doest not apply to the depth buffer,
-		//since we won't be presented at any point. Therefore we will have to add onl one new attachment for color
-		//which is a so-called resolve attachment.
-		colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		colorAttachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-		VkAttachmentDescription colorAttachmentResolve = {};
-		colorAttachmentResolve.format = m_SwapChainImageFormat;
-		colorAttachmentResolve.samples = VK_SAMPLE_COUNT_1_BIT;
-		colorAttachmentResolve.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-		colorAttachmentResolve.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-		colorAttachmentResolve.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-		colorAttachmentResolve.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-		colorAttachmentResolve.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		colorAttachmentResolve.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-		VkAttachmentDescription depthAttachment = {};
-
-		//The format should be the same as the depth image itself.
-		depthAttachment.format = FindDepthFormat();
-		depthAttachment.samples = m_msaaSamples;
-		depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-
-		//This time we don't care about storing the depth data, because it will not be used after drawing has finished.
-		//This may allow the hardware to perfrom additional optimizatoins.
-		depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-		depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-		depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-
-		//Just like the color buffer, we don't care about the previous depth contents, so we can use VK_IMAGE_LAYOUT_UNDEFINED as initialLayout.
-		depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-
-		//the attachment parameter specifies which attachment to reference by its index in the attachment descriptions array.
-		//Out array consists of a single vkAttachmentDescription, so its index is 0.
-		//The layout specifies which layout we would like the attachment to have during a subpass that uses this reference.
-		//Vulkan will automatically transition the attachment to this laoyut when the subpass is started.
-		//We inted to use the attachment to function as a color buffer and the VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL layout
-		//will give us the best performance, as its name implies
-
-		VkAttachmentReference colorAttachmentRef = {};
-		colorAttachmentRef.attachment = 0;
-		colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-		//MSAA: the render pass has to be instructed to resolve multisampled color image into regular attachment
-		VkAttachmentReference colorAttachmentResolveRef = {};
-		colorAttachmentResolveRef.attachment = 2;
-		colorAttachmentResolveRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-		VkAttachmentReference depthAttachmentRef = {};
-		depthAttachmentRef.attachment = 1;
-		depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-		VkSubpassDescription subpass = {};
-		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-
-		//the index of the attachment in this array is directly referenced from the fragment shader
-		//with the layout(location = 0) out vec4 outColor directive!
-		subpass.colorAttachmentCount = 1;
-		subpass.pColorAttachments = &colorAttachmentRef;
-
-		//Add a reference to the attachment for the first (and only) subpass
-		//Unlike color attachments, a subpass can only use a single depth(+ stencil) attachment.
-		//It wouldn't really make any sense to do depth test on multiple buffers.
-		subpass.pDepthStencilAttachment = &depthAttachmentRef;
-
-		//pInputAttachments: attachments that are read from a shader
-		//pResolveAttachments: attachments used for multisampling color attachments
-		//pDepthStencilAttachment: attachments for depth and stencil data
-		//pPreserveAttachments: attachments that are not used by this subpass, but for which the data must be preserved.
-		subpass.pResolveAttachments = &colorAttachmentResolveRef;
-
-		//the first 2 fields specify the indices of the dependency and the dependent subpass. The special value VK_SUBPASS_EXTERNAL refers to
-		//the implicit subpass before or after the render pass depending on whether it is specified in srcSubpass or dstSubpass.
-		//The index 0 refers to our subpass, which is the first and only one.
-		//The dstSubpass must always be higher than srcSubpass to prevent cycles in the dependency graph.
-		VkSubpassDependency dependency = {};
-		dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-		dependency.dstSubpass = 0;
-
-		//The next two fields specify the operations to wait on and the stages in which these operation occur.
-		//We need to wait for the swap chain to finish reading from the image before we can access it.
-		//This can be accomplished by waiting on the color attachment output stage itself.
-		dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		dependency.srcAccessMask = 0;
-
-		//The operation that should wait on this are the color attachment stage and involve the reading and writing of the color attachment.
-		//These settings will prevent the transition from happening until it's actually necessary (and allowed).
-		//this is when we want to start writing colors to it.
-		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-		std::array<VkAttachmentDescription, 3> attachments = { colorAttachment, depthAttachment, colorAttachmentResolve };
-
-		VkRenderPassCreateInfo renderPassInfo = {};
-		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-		renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-		renderPassInfo.pAttachments = attachments.data();
-		renderPassInfo.subpassCount = 1;
-		renderPassInfo.pSubpasses = &subpass;
-		renderPassInfo.dependencyCount = 1;
-		renderPassInfo.pDependencies = &dependency;
-
-		if (vkCreateRenderPass(m_UniqueCpu->GetDevice(), &renderPassInfo, nullptr, &m_RenderPass) != VK_SUCCESS)
-			throw std::runtime_error("failed to create render pass");
-
-	}
-
-	void CreateFrameBuffers()
-	{
-		m_SwapChainFrameBuffers.resize(m_SwapChainImageViews.size());
-
-		for (size_t i = 0; i < m_SwapChainImageViews.size(); ++i)
-		{
-			std::array<VkImageView, 3> attachements =
-			{
-				m_ColorImageView,
-				m_DepthImageView,
-				m_SwapChainImageViews[i]
-			};
-
-			//as you can see, creation of framebuffers is quite straightforward.
-			//We first need to specify with which renderPass the framebuffer needs to be compatible.
-			//You can only use a framebuffer with the render passes that it is compatible with,
-			//which roughly means that they use the same number and type of attachments.
-			VkFramebufferCreateInfo framebufferInfo = {};
-			framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-			framebufferInfo.renderPass = m_RenderPass;
-
-			//the attachmentCount and pAttachments parameters specify the VkImageView objects that should be bound
-			//to the respective attachment descriptions in the render pass pAttachment array.
-			framebufferInfo.attachmentCount = static_cast<uint32_t>(attachements.size());
-			framebufferInfo.pAttachments = attachements.data();
-
-			//The width and height parameters are self-explanatory and layers reders to the number of layers in image arrays
-			//Our swap chain images are single images, so the number of layers is 1.
-			framebufferInfo.width = m_SwapChainExtent.width;
-			framebufferInfo.height = m_SwapChainExtent.height;
-			framebufferInfo.layers = 1;
-
-			if (vkCreateFramebuffer(m_UniqueCpu->GetDevice(), &framebufferInfo, nullptr, &m_SwapChainFrameBuffers[i]) != VK_SUCCESS)
-				throw std::runtime_error("failed to create framebuffer!");
-		}
-
-	}
-
 	void CreateCommandPool()
 	{
 		const QueueFamilyIndices queueFamilyIndices = m_UniqueGpu->GetDesc().QueueIndices;
@@ -1223,7 +737,7 @@ private:
 
 	void CreateCommandBuffers()
 	{
-		m_CommandBuffers.resize(m_SwapChainFrameBuffers.size());
+		m_CommandBuffers.resize(m_UniqueSwapChain->GetFrameBuffers().size());
 
 		VkCommandBufferAllocateInfo allocInfo = {};
 		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -1261,13 +775,13 @@ private:
 
 			VkRenderPassBeginInfo renderPassInfo = {};
 			renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-			renderPassInfo.renderPass = m_RenderPass;
-			renderPassInfo.framebuffer = m_SwapChainFrameBuffers[i];
+			renderPassInfo.renderPass = m_UniqueRenderPass->GetRenderPass();
+			renderPassInfo.framebuffer = m_UniqueSwapChain->GetFrameBuffers()[i];
 
 			//the render area defines where shader loads and stores will take place.
 			//The pixels outside this region will have undefined values. It should match the size of the attachments for best performance.
 			renderPassInfo.renderArea.offset = { 0,0 };
-			renderPassInfo.renderArea.extent = m_SwapChainExtent;
+			renderPassInfo.renderArea.extent = m_UniqueSwapChain->GetExtent();
 
 			std::array<VkClearValue, 2> clearValues = {};
 			clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
@@ -1377,7 +891,7 @@ private:
 		//The last parameter specifies a variable to output the index of the swap chain image that has become available.
 		//The index refers to the VkImage in our m_SwapChainImages array. We're going to use that index to pick the right command buffer.
 
-		VkResult result = vkAcquireNextImageKHR(m_UniqueCpu->GetDevice(), m_SwapChain, std::numeric_limits<uint64_t>::max(), m_ImageAvailableSemaphores[m_CurrentFrame], VK_NULL_HANDLE, &imageIndex);
+		VkResult result = vkAcquireNextImageKHR(m_UniqueCpu->GetDevice(), m_UniqueSwapChain->GetSwapChain(), std::numeric_limits<uint64_t>::max(), m_ImageAvailableSemaphores[m_CurrentFrame], VK_NULL_HANDLE, &imageIndex);
 
 		//if the swap chain turns out to be out of date when attempting to qcquire an image,
 		//then it is no longer possible to present it.
@@ -1393,7 +907,7 @@ private:
 		else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
 			throw std::runtime_error("failed to acquire swap chain image!");
 
-		UpdateUniformBuffer(imageIndex);
+		m_UniqueSwapChain->UpdateUniformBuffer(imageIndex);
 
 		VkSubmitInfo submitInfo = {};
 		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -1437,7 +951,7 @@ private:
 		presentInfo.waitSemaphoreCount = 1;
 		presentInfo.pWaitSemaphores = signalSemaphores;
 
-		VkSwapchainKHR swapChains[] = { m_SwapChain };
+		VkSwapchainKHR swapChains[] = { m_UniqueSwapChain->GetSwapChain() };
 
 		//The next 3 parameters specify the swap chains to present images to and the index of the image for each swap chain.
 		//This will almost always be a single one.
@@ -1509,20 +1023,20 @@ private:
 
 	void CleanupSwapChain()
 	{
-		for (size_t i = 0; i < m_SwapChainFrameBuffers.size(); ++i)
-			vkDestroyFramebuffer(m_UniqueCpu->GetDevice(), m_SwapChainFrameBuffers[i], nullptr);
+		for (size_t i = 0; i < m_UniqueSwapChain->GetFrameBuffers().size(); ++i)
+			vkDestroyFramebuffer(m_UniqueCpu->GetDevice(), m_UniqueSwapChain->GetFrameBuffers()[i], nullptr);
 
 		//Instead of destroying the command pool, we just clean up the exisiting command buffers
 		//with vkFreeCommandBuffers. This way we can reuse the existing pool to allocate the new command buffers.
 		vkFreeCommandBuffers(m_UniqueCpu->GetDevice(), m_CommandPool, static_cast<uint32_t>(m_CommandBuffers.size()), m_CommandBuffers.data());
 		vkDestroyPipeline(m_UniqueCpu->GetDevice(), m_GraphicsPipeline, nullptr);
 		vkDestroyPipelineLayout(m_UniqueCpu->GetDevice(), m_PipelineLayout, nullptr);
-		vkDestroyRenderPass(m_UniqueCpu->GetDevice(), m_RenderPass, nullptr);
+		//vkDestroyRenderPass(m_UniqueCpu->GetDevice(), m_UniqueRenderPass->GetRenderPass() , nullptr);
 
-		for (size_t i = 0; i < m_SwapChainImageViews.size(); ++i)
-			vkDestroyImageView(m_UniqueCpu->GetDevice(), m_SwapChainImageViews[i], nullptr);
+		for (size_t i = 0; i < m_UniqueSwapChain->GetImageViews().size(); ++i)
+			vkDestroyImageView(m_UniqueCpu->GetDevice(), m_UniqueSwapChain->GetImageViews()[i], nullptr);
 
-		vkDestroySwapchainKHR(m_UniqueCpu->GetDevice(), m_SwapChain, nullptr);
+		vkDestroySwapchainKHR(m_UniqueCpu->GetDevice(), m_UniqueSwapChain->GetSwapChain(), nullptr);
 	}
 
 	void RecreateSwapChain()
@@ -1544,15 +1058,15 @@ private:
 		CleanupSwapChain();
 
 		//Recreate the swapchain itself
-		CreateSwapChain();
+		//CreateSwapChain();
 
 		//the image views need to be recreated because they are based directly on the swap chain images
-		CreateImageViews();
+		//CreateImageViews();
 
 		//The render pass needs to be recreated because it depends on the format of the swap chain images.
 		//it is rare for the swap chain image format to change during an operation like a window resize
 		//but it should still be handled
-		CreateRenderPass();
+		//CreateRenderPass();
 
 		//Viewport and scissor rectangles size is speciifed during graphics pipeline creation, so the pipeline
 		//also needs to be rebuilt. it is possible to avoid this by using dynamic state for the viewports and scissor rectangles.
@@ -1564,7 +1078,7 @@ private:
 		CreateDepthResources();
 
 		//The frame buffers and command buffers also directly depend on the swap chain images.
-		CreateFrameBuffers();
+		//CreateFrameBuffers();
 		CreateCommandBuffers();
 	}
 
@@ -1595,15 +1109,15 @@ private:
 		//that we're not able to use vkMapMemory. However, we can copy data from the stagingBuffer to the m_VertexBuffer.
 		//We have to indicate that we inted to do that by specifying the transfer source flag for the stagingBuffer and
 		//the transfer destination flag for the m_VertexBuffer, along with the vrtex buffer usage flag.
-		CreateBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staginBuffer, stagingBufferMemory);
+		CreateBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staginBuffer, stagingBufferMemory, m_UniqueCpu.get(), m_UniqueGpu.get());
 
 		void* data;
 		vkMapMemory(m_UniqueCpu->GetDevice(), stagingBufferMemory, 0, bufferSize, 0, &data);
 		memcpy(data, m_Vertices.data(), (size_t)bufferSize);
 		vkUnmapMemory(m_UniqueCpu->GetDevice(), stagingBufferMemory);
 
-		CreateBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_VertexBuffer, m_VertexBufferMemory);
-		CopyBuffer(staginBuffer, m_VertexBuffer, bufferSize);
+		CreateBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_VertexBuffer, m_VertexBufferMemory, m_UniqueCpu.get(), m_UniqueGpu.get());
+		CopyBuffer(staginBuffer, m_VertexBuffer, bufferSize, m_CommandPool, m_UniqueCpu.get());
 
 		vkDestroyBuffer(m_UniqueCpu->GetDevice(), staginBuffer, nullptr);
 		vkFreeMemory(m_UniqueCpu->GetDevice(), stagingBufferMemory, nullptr);
@@ -1636,114 +1150,6 @@ private:
 		//vkUnmapMemory(m_UniqueCpu->GetDevice(), m_VertexBufferMemory);
 	}
 
-	uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
-	{
-		const VkPhysicalDeviceMemoryProperties memProperties = m_UniqueGpu->GetDesc().MemProperties;
-
-		//The VkPhysicalDeviceMemoryProperties structure has 2 arrays memoryTypes and memoryHeaps.
-		//Memory heaps are distinct memory resources like dedicated VRAM and swap space in RAM for 
-		//when VRAM runs out. The different types of memory exist within these heaps.
-		//Right now we'll only concern ourselves with the type of memory and not the heap if comes from,
-		//but you can image that this can affect performance.
-
-		//Let's first find a memory type that suitable for the buffer itself:
-		for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i)
-		{
-			//The typeFilter parameter will be used to specify the bit field of memory types that are suitable.
-			//That means that we can find the index of a suitable memory type by simply iterating over them and
-			//checking if the corresponding bit is set to 1
-
-			//However, we're not just interested in a memory type that is suitable for the vertex buffer.
-			//We also need to be able to write ouir vertex data to that memory.
-			//The memoryTypes array consists of VkMemoryType structs that specify the heap and properties of each type of memory.
-			//The properties define special features of the memory, like being able to map it so we can write it from the CPU.
-			//This property is indicated with VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, but we also need to use the VK_MEMORY_PROPERTY_HOST_COHERENT_BIT property.
-			//We'll see why when we map the memory.
-
-			//We may have more than one desirable property, so we should check if the result of the bitwise AND is not 
-			//jsut non-zero, but equal to the desired properties bit field. IF there is a memory type suitable for the buffer
-			//that also has all of the properties we need, then we return its index, otherwise we throw an exception.
-			if (typeFilter & (1 << i) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
-				return i;
-		}
-
-		throw std::runtime_error("failed to find suitable memory type!");
-	}
-
-	void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory)
-	{
-		VkBufferCreateInfo bufferInfo = {};
-		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-
-		//Specifies the size of the buffer in bytes.
-		//Calculating the byte size of the vertex data is straightfforward with sizeof.
-		bufferInfo.size = size;
-
-		//Indicates for which purpose the data in the buffer is goig to be used.
-		//It is possible to specify multiple purposes using a bitwise or.
-		//Our use case will be a vertex buffer.
-		bufferInfo.usage = usage;
-
-		//Just like the images in the swap chain, buffers can also be owned by a specific queue family or
-		//be shared between multiple at the same time. The buffer will only be used from the fraphics queue,
-		//so we can stick to exclusive access.
-		bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-		//The flags parameter is used to configure sparase buffer memory, which is not relevenat right now.
-		//We'll leave it at the default value of 0.
-
-
-		if (vkCreateBuffer(m_UniqueCpu->GetDevice(), &bufferInfo, nullptr, &buffer) != VK_SUCCESS)
-			throw std::runtime_error("failed to create buffer!");
-
-		VkMemoryRequirements memRequirements;
-		vkGetBufferMemoryRequirements(m_UniqueCpu->GetDevice(), buffer, &memRequirements);
-
-		//The VkMemoryREquirements struct has 3 fields:
-		//size: The size of the required amount of memory in bytes, may differ from bufferInfo.size
-		//alignment: The offset in bytes where the buffer begins in the allocated region of memory,
-		//depends on bufferInfo.usage and bufferInfo.flags
-		//MemoryTypeBits: Bit field of the memory types that are suitable for the buffer
-
-		//Graphics cards can offer different types of memory to allocate from. Each type of memory varies
-		//in terms of allowed operations and performance characteristics.
-		//We need to combine the requirements of the buffer and our own application requirements to find the right
-		//type of memory to use.
-
-		//Memory allocatoin is now as simple as specifying the size and type, both of which are derived
-		//from the memory requirements of the vertex buffer and the desired property.
-		VkMemoryAllocateInfo allocInfo = {};
-		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-		allocInfo.allocationSize = memRequirements.size;
-		allocInfo.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, properties);
-
-		if (vkAllocateMemory(m_UniqueCpu->GetDevice(), &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS)
-			throw std::runtime_error("failed to allocate buffer memory!");
-
-		//the fourth parameter is the offset within the region of memory.
-		//Since this memory is allocated specifically for this vertex buffer, the offset is simply 0.
-		//If the offset is non-zero, then it is required to be divisble by memREquirements.alignment.
-		vkBindBufferMemory(m_UniqueCpu->GetDevice(), buffer, bufferMemory, 0);
-	}
-
-	void CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
-	{
-		VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
-
-		VkBufferCopy copyRegion = {};
-		copyRegion.srcOffset = 0; //Optional
-		copyRegion.dstOffset = 0; //Optional
-		copyRegion.size = size;
-
-		//Contents of buffers are transferred using the vkCmdCopyBuffer command.
-		//It takes the source and destination buffers as arguemtns, and an array of regions to copy.
-		//The regions are defined in VkBufferCopy structs and consist of a soruce buffer offset, 
-		//destinaiton buffer offset and size. //It is not possible to specify VK_WHOLE_SIZE here, unlike the vkMapMemory command.
-		vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
-
-		EndSingleTimeCommands(commandBuffer);
-	}
-
 	void CreateIndexBuffer()
 	{
 		//There are only 2 notable idfferences. The bufferSize is now equal to the number of indices times the size of the index type,
@@ -1754,16 +1160,16 @@ private:
 
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
-		CreateBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+		CreateBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory, m_UniqueCpu.get(), m_UniqueGpu.get());
 
 		void* data;
 		vkMapMemory(m_UniqueCpu->GetDevice(), stagingBufferMemory, 0, bufferSize, 0, &data);
 		memcpy(data, m_Indices.data(), (size_t)bufferSize);
 		vkUnmapMemory(m_UniqueCpu->GetDevice(), stagingBufferMemory);
 
-		CreateBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_IndexBuffer, m_IndexBufferMemory);
+		CreateBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_IndexBuffer, m_IndexBufferMemory, m_UniqueCpu.get(), m_UniqueGpu.get());
 
-		CopyBuffer(stagingBuffer, m_IndexBuffer, bufferSize);
+		CopyBuffer(stagingBuffer, m_IndexBuffer, bufferSize, m_CommandPool, m_UniqueCpu.get());
 
 		vkDestroyBuffer(m_UniqueCpu->GetDevice(), stagingBuffer, nullptr);
 		vkFreeMemory(m_UniqueCpu->GetDevice(), stagingBufferMemory, nullptr);
@@ -1816,69 +1222,16 @@ private:
 			throw std::runtime_error("failed to create descriptor set layout!");
 	}
 
-	void CreateUniformBuffer()
-	{
-		VkDeviceSize bufferSize = sizeof(UniformBufferObject);
-
-		m_UniformBuffers.resize(m_SwapChainImages.size());
-		m_UniformBuffersMemory.resize(m_SwapChainImages.size());
-
-		for (size_t i = 0; i < m_SwapChainImages.size(); ++i)
-			CreateBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, m_UniformBuffers[i], m_UniformBuffersMemory[i]);
-
-	}
-
-	void UpdateUniformBuffer(uint32_t currentImage)
-	{
-		//this function will generate a new transformation every frame to make the geometry spin around.
-		static auto startTime = std::chrono::high_resolution_clock::now();
-		auto currentTime = std::chrono::high_resolution_clock::now();
-		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-
-		UniformBufferObject ubo = {};
-		//The glm::rotate takes in an exisiting transformation, rotation angle and rotatoin axis as parameters.
-		//the glm::mat4(1.0f) constructor return an identity matrix.
-		//Using a rotation of time * glm::radians(90.f) accomplishes the purpose of rotation 90 degrees per second.
-		
-		ubo.Model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-
-		//For the view transformation I've decided to look a tthe geometry form above at a 45 degree angle.
-		//The glm::lookAt function takes the eye position, center position and up axis as parameters.
-		ubo.View = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-
-		//I've chosen to use a perspective projection with a 45 degree angle vertical fov.
-		//The other parameters are the aspect ratio, near and far view planes.
-		//it is important to use the current swapchain extent to calculate the aspect ration to take into account the
-		//new width and height of the window after a resize.
-		ubo.Proj = glm::perspective(glm::radians(45.0f), m_SwapChainExtent.width / (float)m_SwapChainExtent.height, 0.1f, 10.f);
-
-		//GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted.
-		//The easies way to compensate for that is to flip the sign on the scaling factor of the Y axis in the proj matrix.
-		//If you don't do this, then the image will be rendered upside down.
-		ubo.Proj[1][1] *= -1;
-
-		//Using a UBO this way is not the moest efficient way to pass frequently changing values to the shader.
-		//A more fficine tway to pass a smaal buffer of data to shaders push constants.
-		//https://stackoverflow.com/questions/50956414/what-is-a-push-constant-in-vulkan
-		//https://github.com/PacktPublishing/Vulkan-Cookbook
-		//https://github.com/SaschaWillems/Vulkan
-		void* data;
-		vkMapMemory(m_UniqueCpu->GetDevice(), m_UniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
-		memcpy(data, &ubo, sizeof(ubo));
-		vkUnmapMemory(m_UniqueCpu->GetDevice(), m_UniformBuffersMemory[currentImage]);
-
-	}
-
 	void CreateDescriptorPool()
 	{
 		//We first need to describe which descriptor types our descriptor sets are going to contain and
 		//how many of them, using VkDescriptorPoolSize structures
 		std::array<VkDescriptorPoolSize, 2> poolSizes = {};
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		poolSizes[0].descriptorCount = static_cast<uint32_t>(m_SwapChainImages.size());
+		poolSizes[0].descriptorCount = static_cast<uint32_t>(m_UniqueSwapChain->GetImages().size());
 
 		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[1].descriptorCount = static_cast<uint32_t>(m_SwapChainImages.size());
+		poolSizes[1].descriptorCount = static_cast<uint32_t>(m_UniqueSwapChain->GetImages().size());
 
 		//We will allocate one of these descriptors for every frame. This pool size structure is referenced
 		//ny the main VkDescriptorPoolCreateInfo:
@@ -1889,7 +1242,7 @@ private:
 
 		//Aside from the maimum number of individual descriptors that are available,
 		//We also need to specify the maimum number of descriptors sets that may be allocated.
-		poolInfo.maxSets = static_cast<uint32_t>(m_SwapChainImages.size());
+		poolInfo.maxSets = static_cast<uint32_t>(m_UniqueSwapChain->GetImages().size());
 
 		//The structure has an optional flag similar to command pools that determines if individual
 		//descriptor sets can be freed or not: VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT.
@@ -1906,17 +1259,17 @@ private:
 		//You need to specify the desriptor pool to allocate from, the number of descriptors sets to allocate
 		//and the descriptor layour to base them on.
 
-		std::vector<VkDescriptorSetLayout> layouts(m_SwapChainImages.size(), m_DescriptorSetLayout);
+		std::vector<VkDescriptorSetLayout> layouts(m_UniqueSwapChain->GetImages().size(), m_DescriptorSetLayout);
 
 		//In our case, we will create one descriptor set for each swap chain image, all with the same layout.
 		//Unfortunately we do need all the copies of the layour because the next function expects an array matching the numbers of sets.
 		VkDescriptorSetAllocateInfo allocInfo = {};
 		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 		allocInfo.descriptorPool = m_DescriptorPool;
-		allocInfo.descriptorSetCount = static_cast<uint32_t>(m_SwapChainImages.size());
+		allocInfo.descriptorSetCount = static_cast<uint32_t>(m_UniqueSwapChain->GetImages().size());
 		allocInfo.pSetLayouts = layouts.data();
 
-		m_DescriptorSets.resize(m_SwapChainImages.size());
+		m_DescriptorSets.resize(m_UniqueSwapChain->GetImages().size());
 
 		//You don't need to explicitly clean up descriptor sets, because they will be automatically freed
 		//when the desriptor pool is destroyed. The call to vkAllocateDescriptorSets will allocate descriptor
@@ -1926,12 +1279,12 @@ private:
 
 
 		//The descriptor sets have been allocated now, but the descriptors within still need to be configured.
-		for (size_t i = 0; i < m_SwapChainImages.size(); ++i)
+		for (size_t i = 0; i < m_UniqueSwapChain->GetImages().size(); ++i)
 		{
 			//Descriptors that refer to buffers, like our uniform buffer descriptor, are configured with a vkDescriptorBufferInfo.
 			//This structure specifies the buffer and the region within it that contains the data for the descriptor.
 			VkDescriptorBufferInfo  bufferInfo = {};
-			bufferInfo.buffer = m_UniformBuffers[i];
+			bufferInfo.buffer = m_UniqueSwapChain->GetUniformBuffers()[i];
 			bufferInfo.offset = 0;
 			//If you're overwriting the whole buffer, like we are in this case, then it is also possible to use the VK_WHOLE_SIZE
 			//value for the range. The configuration of descriptors is updated using the vkUpdateDescriptorsSets function,
@@ -2036,7 +1389,7 @@ private:
 
 		//The buffer should be in host visible memory so that we can map it
 		//and it should be usable as a transfer source so that we can copy it to an image later on.
-		CreateBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+		CreateBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory, m_UniqueCpu.get(), m_UniqueGpu.get());
 
 		void* data;
 		vkMapMemory(m_UniqueCpu->GetDevice(), stagingBufferMemory, 0, imageSize, 0, &data);
@@ -2047,7 +1400,7 @@ private:
 		stbi_image_free(pixels);
 
 		//We must inform Vulkan that we intend to use the texture image as both the source and destination of a transfer.
-		CreateImage(texWidth, texHeight, m_MipLevels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_TextureImage, m_TextureImageMemory);
+		CreateImage(texWidth, texHeight, m_MipLevels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_TextureImage, m_TextureImageMemory, m_UniqueCpu.get(), m_UniqueGpu.get());
 
 		//Copy the staging buffer to the texture image with 2 steps:
 		//Transition the texture image to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
@@ -2056,7 +1409,7 @@ private:
 		//The image was created with the VK_IMAGE_LAYOUT_UNDEFFINED layout, so that one should be specified as old layout 
 		//when transitioning textureImage.
 		TransitionImageLayout(m_TextureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, m_MipLevels);
-		CopyBufferToImage(stagingBuffer, m_TextureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+		CopyBufferToImage(stagingBuffer, m_TextureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), m_CommandPool, m_UniqueCpu.get());
 
 		GenerateMipMaps(m_TextureImage, VK_FORMAT_R8G8B8A8_UNORM, texWidth, texHeight, m_MipLevels);
 		//To be able to start sampling from the texture image in the shader, we need one last transition
@@ -2067,143 +1420,9 @@ private:
 
 	}
 
-	void CreateImage(uint32_t width, uint32_t height, uint32_t mipLevels, VkSampleCountFlagBits numSamples, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory)
-	{
-		VkImageCreateInfo imageInfo = {};
-		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-
-		//Tells Vulkan with what kind of coordinate system the texels in the image are going to be addressed.
-		//It is possible to create 1D, 2D and 3D images.
-		//1D images can be used to store an array of data or gradient, 2D images are mainly used for textures
-		//3D images can be used to store voxel volumes, for example.
-		imageInfo.imageType = VK_IMAGE_TYPE_2D;
-
-		//specifies the dimensions of the image, basically how many texels there are on each axis.
-		imageInfo.extent.width = width;
-		imageInfo.extent.height = height;
-
-		//must be 1, not 0
-		imageInfo.extent.depth = 1;
-
-		//no mip mapping or arrays, for now.
-		imageInfo.mipLevels = 1;
-		imageInfo.arrayLayers = 1;
-
-		//Vulkan supports many possible image formats, but we should use the same format for the texels as the pixels in the buffer,
-		//otherwise copy operation will fail.
-		imageInfo.format = format;
-
-		//The tiling field can have one of the two values:
-		//VK_IMAGE_TILING_LINEAR: Texetls are laid out in row-major order like our pixels array
-		//VK_IMAGe_TILING_OPTIMAL: Texels are laid out in an implementation defined order for optimal access
-		imageInfo.tiling = tiling;
-
-		//Unlike the layout of an image, the tiling mode cannot be changed at a later time.
-		//If you want to be able to directly access texels in the memory of the image, then you must use VK_IMAGE_TILING_LINEAR.
-
-		//There are only 2 possible values for the initialLayout of an image:
-		//VK_IMAGE_LAYOUT_UNDEFINED: Not usable by the GPU and the very first transition will discard the texels.
-		//VK_IMAGE_LAYOUT_PREINITIALIZED: Not usable by the GPU, but the first transition will preserve the texels
-		imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-		//There are a few situations where it is necessary for the texels to be preserved during the first transition.
-		//One example, however, would be if you wanted to use an image as a staging image in combination with the VK_IMAGE_TILING_LINEAR layout
-		//In that case you'd want to upload the texel data to it and then transition the image to be a transfer source wihtout losing the data.
-		//In our case, however, we're first going to transition the image to be atransfer destination and 
-		//then copy texel data to it from a buffer object so we don't need this property and can safely use VK_IMAGE_LAYOUT_UNDEFINED
-
-		//The usage field has the same semantics as the one during buffer creation. The image is going to be used as
-		//destination for the buffer copy, so it should be set up as a trnasfer destination. We also want to be able to access the image
-		//from the shader to color our mesh, so the usage should include VK_IMAGE_USAGE_SAMPLED_BIT.
-		imageInfo.usage = usage;
-
-		//The image will only be used by one queue family: the one that supports graphics (and therefore also) transfer operations.
-		imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-		//The samples flag is related to multisampling. This is only relevant for images that will be used as attachments,
-		//So stick to one sample. There are some optional flags for images that are related to sparse images. Sparse images are images
-		//where only certain regions are actually backed by memory. If you were using a 3D texture for a voxel terrain,
-		//for example, then you could use this to avoid allocating memory to store large volumes of "air" values.
-		//We won't be using it in this tutorial, so leave it to its default 0 value.
-		imageInfo.samples = numSamples;
-		imageInfo.flags = 0; //Optional
-
-		imageInfo.mipLevels = mipLevels;
-
-		if (vkCreateImage(m_UniqueCpu->GetDevice(), &imageInfo, nullptr, &image) != VK_SUCCESS)
-			throw std::runtime_error("failed to create image!");
-
-		//Same as buffer allocation except use vkGetImageMemoryRequirements and vkBindImageMemory
-		VkMemoryRequirements memRequirements;
-		vkGetImageMemoryRequirements(m_UniqueCpu->GetDevice(), image, &memRequirements);
-
-		VkMemoryAllocateInfo allocInfo = {};
-		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-		allocInfo.allocationSize = memRequirements.size;
-		allocInfo.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, properties);
-
-		if (vkAllocateMemory(m_UniqueCpu->GetDevice(), &allocInfo, nullptr, &imageMemory) != VK_SUCCESS)
-			throw std::runtime_error("failed to allocate image memory!");
-
-		vkBindImageMemory(m_UniqueCpu->GetDevice(), image, imageMemory, 0);
-	}
-
-	VkCommandBuffer BeginSingleTimeCommands()
-	{
-		//Memory transfer operations are executed using command buffers, just like drawing commands.
-		//Therefore we must first allocate a temporary command buffer.
-		//You may wish to create a separate command pool for these kinds of short-lived buffers, 
-		//because the implementation may be able to apply memory allocation optimizations.
-		//You should use the VK_COMMAND_POOL_CREATE_TRANSIENT_BIT flag during command pool genreration in that case.
-		VkCommandBufferAllocateInfo allocInfo = {};
-		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-		allocInfo.commandPool = m_CommandPool;
-		allocInfo.commandBufferCount = 1;
-
-		VkCommandBuffer commandBuffer;
-		vkAllocateCommandBuffers(m_UniqueCpu->GetDevice(), &allocInfo, &commandBuffer);
-
-		//Immediatly start recording the command buffer
-		VkCommandBufferBeginInfo beginInfo = {};
-		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-
-		//The VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT flag that we used for the drawing command buffers
-		//is not necessary here, because we're only going to use the command buffer once and wait with returning 
-		//from the function until the copy operation has finished executing. It's good practice to tell the drive
-		//about our intent using VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT.
-		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-		vkBeginCommandBuffer(commandBuffer, &beginInfo);
-
-		return commandBuffer;
-	}
-
-	void EndSingleTimeCommands(VkCommandBuffer commandBuffer)
-	{
-		vkEndCommandBuffer(commandBuffer);
-
-		VkSubmitInfo submitInfo = {};
-		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &commandBuffer;
-
-		//Unlike the draw commands, there are no events we need to wait on this time.
-		//We just want to execute the transfer on the buffers immediatly.
-		//There are again 2 possible ways to wait on this transfer to complete.
-		//We could use a fence and wait with vkWaitForFences, or simply wait for the transfer queue to 
-		//become idle with vkQueueWaitIdle.
-		//A fence would allow you to schedule multiple transfers simultaneously and wait for all of them to complete,
-		//Instead of executing one at a time. That may give the driver more opportunities to optimize.
-		vkQueueSubmit(m_UniqueCpu->GetGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
-		vkQueueWaitIdle(m_UniqueCpu->GetGraphicsQueue());
-
-		vkFreeCommandBuffers(m_UniqueCpu->GetDevice(), m_CommandPool, 1, &commandBuffer);
-	}
-
 	void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels)
 	{
-		VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
+		VkCommandBuffer commandBuffer = BeginSingleTimeCommands(m_CommandPool, m_UniqueCpu.get());
 
 		//One of the most common ways to perform layout transitions is using an image memory barrier.
 		//A pipeline barrier like that is generally used to synchronize access to resources,
@@ -2330,81 +1549,14 @@ private:
 			0, nullptr,
 			1, &barrier);
 
-		EndSingleTimeCommands(commandBuffer);
-	}
-
-	void CopyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height)
-	{
-		VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
-
-		//Just like with buffer copies, you need to specify which part of is going to be copied to which part of the image.
-		//This happens through VkBufferImageCopy structs.
-		VkBufferImageCopy region = {};
-
-		//Specifies the byte offset in the buffer at which the pixel values start.
-		region.bufferOffset = 0;
-
-		//specify how the pixels are laid out in memory.
-		//For example, you could have some padding bytes between rows of the image.
-		//Specifying 0 for both indicates that the pixels are simply tightly packed like they are in our case.
-		region.bufferRowLength = 0;
-		region.bufferImageHeight = 0;
-
-		//indicates which part of the image we want to copy the pixels
-		region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		region.imageSubresource.mipLevel = 0;
-		region.imageSubresource.baseArrayLayer = 0;
-		region.imageSubresource.layerCount = 1;
-		region.imageOffset = { 0,0,0 };
-		region.imageExtent = { width, height, 1 };
-
-		//the fourth parameters indicates which layout the image is currently using.
-		//I'm assuming here that the image has already been transitioned to the layout that is optimal for copying
-		//pixels to.
-		vkCmdCopyBufferToImage(commandBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-		EndSingleTimeCommands(commandBuffer);
+		EndSingleTimeCommands(commandBuffer, m_CommandPool, m_UniqueCpu.get());
 	}
 
 	void CreateTextureImageView()
 	{
 		//The code for this function can be based directly on CreateImageViews.
 		//The only 2 changes you have to make are the format and the image
-		m_TextureImageView = CreateImageView(m_TextureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, m_MipLevels);
-	}
-
-	VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels)
-	{
-		VkImageViewCreateInfo viewInfo = {};
-		viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-		viewInfo.image = image;
-
-		//The viewType and format fields specify how the image data should be interpreted.
-		//the viewType parameter allows you to treat images as 1D textures, 2D textures, 3D textures and cubemaps
-		viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		viewInfo.format = format;
-
-		//The components field allows you to swizzle the color channels around. 
-		//for example, you can map all of the channels to the red channel for a monochrome texture.
-		//you can also map constant values of 0 and 1 to a channel. In our case we'll stick to the default mapping.
-		viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-		viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-		viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-		viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-
-		//the subresourceRange field describes what the image's purpose is and which part of the image should be accessed.
-		//Our images will be used as color targets without any mipmapping levels or multiple layers.
-		viewInfo.subresourceRange.aspectMask = aspectFlags;
-		viewInfo.subresourceRange.baseMipLevel = 0;
-		viewInfo.subresourceRange.levelCount = mipLevels;
-		viewInfo.subresourceRange.baseArrayLayer = 0;
-		viewInfo.subresourceRange.layerCount = 1;
-
-		VkImageView imageView;
-		if (vkCreateImageView(m_UniqueCpu->GetDevice(), &viewInfo, nullptr, &imageView) != VK_SUCCESS)
-			throw std::runtime_error("failed to create texture image view!");
-
-		return imageView;
+		m_TextureImageView = CreateImageView(m_TextureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, m_MipLevels, m_UniqueCpu.get());
 	}
 
 	void CreateTextureSampler()
@@ -2488,51 +1640,14 @@ private:
 		//VK_FORMAT_D32_SFLOAT_S8_UINT: 32-bit signed float for depth and 8 bit stencil component
 		//VK_FORMAT_D24_UNORM_S8_UINT: 24-bit float for depth and 8 bit stencil component
 		//The stencil component is used for stencil tests, which is an additional test that can be combined with depth testing.
-		VkFormat depthFormat = FindDepthFormat();
-		CreateImage(m_SwapChainExtent.width, m_SwapChainExtent.height, 1, m_msaaSamples, depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_DepthImage, m_DepthImageMemory);
-		m_DepthImageView = CreateImageView(m_DepthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
+		VkFormat depthFormat = FindDepthFormat(m_UniqueGpu.get());
+		CreateImage(m_UniqueSwapChain->GetExtent().width, m_UniqueSwapChain->GetExtent().height, 1, m_UniqueRenderPass->GetSamplesCount(), depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_DepthImage, m_DepthImageMemory, m_UniqueCpu.get(), m_UniqueGpu.get());
+		m_DepthImageView = CreateImageView(m_DepthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1, m_UniqueCpu.get());
 
 		//The undefined layout can be used as initial layout, becasue there are no existing depth image contets that matter.
 		//We need to update some of the logic in transitionImageLayout to use the right subrouse aspect.
 		TransitionImageLayout(m_DepthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1);
 
-	}
-
-	VkFormat FindSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features)
-	{
-		//The support of a format depends on the tiling mode and usage, so we must also include these as parameters.
-		//The support of a format can be queried using the vkGetPhysicalDeviceFormatPropererties function
-		for (VkFormat format : candidates)
-		{
-			//VkFormatProperties contains 3 fields:
-			//linearTilingFeatures: Use cases that are supported with linear tiling
-			//optimalTilingFeatures: USe cases that are supported with optimal tiling
-			//bufferFeatures: Use cases that are supported for buffers.
-			VkFormatProperties props;
-			vkGetPhysicalDeviceFormatProperties(m_UniqueGpu->GetDevice(), format, &props);
-
-			//Only the first 2 fields are relevant here, and the one we check depends on the tiling parameter
-			//of the function
-			if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features)
-				return format;
-			else if (tiling == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures & features) == features)
-				return format;
-
-			//If none of the candidate formats support the desired usage, then we can either return a special
-			//value of simply throw an exception
-		}
-
-		throw std::runtime_error("failed to find supported format!");
-	}
-
-	VkFormat FindDepthFormat()
-	{
-		return FindSupportedFormat({ VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT }, VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
-	}
-
-	bool HasStencilComponent(VkFormat format)
-	{
-		return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
 	}
 
 	void LoadModel()
@@ -2625,7 +1740,7 @@ private:
 		if (!(formatProps.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
 			throw std::runtime_error("texture image format does not support linear blitting!");
 
-		VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
+		VkCommandBuffer commandBuffer = BeginSingleTimeCommands(m_CommandPool, m_UniqueCpu.get());
 
 		VkImageMemoryBarrier barrier = {};
 		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -2708,39 +1823,21 @@ private:
 
 		vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 
-		EndSingleTimeCommands(commandBuffer);
-	}
-
-	VkSampleCountFlagBits GetMaxUsableSampleCount()
-	{
-		const VkPhysicalDeviceProperties physicalDeviceProperties = m_UniqueGpu->GetDesc().Properties;
-
-		VkSampleCountFlags counts = std::min(physicalDeviceProperties.limits.framebufferColorSampleCounts, physicalDeviceProperties.limits.framebufferDepthSampleCounts);
-		if (counts & VK_SAMPLE_COUNT_64_BIT)
-			return VK_SAMPLE_COUNT_64_BIT;
-		else if (counts & VK_SAMPLE_COUNT_32_BIT)
-			return VK_SAMPLE_COUNT_32_BIT;
-		else if (counts & VK_SAMPLE_COUNT_8_BIT)
-			return VK_SAMPLE_COUNT_8_BIT;
-		else if (counts & VK_SAMPLE_COUNT_4_BIT)
-			return VK_SAMPLE_COUNT_4_BIT;
-		else if (counts & VK_SAMPLE_COUNT_2_BIT)
-			return VK_SAMPLE_COUNT_2_BIT;
-
-		return VK_SAMPLE_COUNT_1_BIT;
+		EndSingleTimeCommands(commandBuffer, m_CommandPool, m_UniqueCpu.get());
 	}
 
 	void CreateColorResources()
 	{
-		VkFormat colorFormat = m_SwapChainImageFormat;
+		VkFormat colorFormat = m_UniqueSwapChain->GetFormat();
 
-		CreateImage(m_SwapChainExtent.width, m_SwapChainExtent.height, 1,
-			m_msaaSamples, colorFormat,
+		CreateImage(m_UniqueSwapChain->GetExtent().width, m_UniqueSwapChain->GetExtent().height, 1,
+			m_UniqueRenderPass->GetSamplesCount(), colorFormat,
 			VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
-			m_ColorImage, m_ColorImageMemory);
+			m_ColorImage, m_ColorImageMemory,
+			m_UniqueCpu.get(), m_UniqueGpu.get());
 
-		m_ColorImageView = CreateImageView(m_ColorImage, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+		m_ColorImageView = CreateImageView(m_ColorImage, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1, m_UniqueCpu.get());
 
 		TransitionImageLayout(m_ColorImage, colorFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1);
 	}
@@ -2751,20 +1848,12 @@ private:
 	std::unique_ptr<Surface> m_UniqueSurface;
 	std::unique_ptr<PhysicalDevice> m_UniqueGpu;
 	std::unique_ptr<LogicalDevice> m_UniqueCpu;
+	std::unique_ptr<SwapChain> m_UniqueSwapChain;
+	std::unique_ptr<RenderPass> m_UniqueRenderPass;
+	VkSampleCountFlagBits m_msaaSamples;
 	
-	//VkPhysicalDevice m_PhysicalDevice = VK_NULL_HANDLE;
-	//VkDevice m_UniqueCpu->GetDevice();
-	//VkQueue m_GraphicsQueue;
-	//VkQueue m_PresentQueue;
-	VkSwapchainKHR m_SwapChain;
-	std::vector<VkImage> m_SwapChainImages;
-	VkFormat m_SwapChainImageFormat;
-	VkExtent2D m_SwapChainExtent;
-	std::vector<VkImageView> m_SwapChainImageViews;
-	VkRenderPass m_RenderPass;
 	VkPipelineLayout m_PipelineLayout = {};
 	VkPipeline m_GraphicsPipeline;
-	std::vector<VkFramebuffer> m_SwapChainFrameBuffers;
 	VkCommandPool m_CommandPool;
 	std::vector<VkCommandBuffer> m_CommandBuffers;
 	//VkSemaphore m_ImageAvailableSemaphore;
@@ -2781,8 +1870,6 @@ private:
 	VkBuffer m_IndexBuffer;
 	VkDeviceMemory m_IndexBufferMemory;
 	VkDescriptorSetLayout m_DescriptorSetLayout;
-	std::vector<VkBuffer> m_UniformBuffers;
-	std::vector<VkDeviceMemory> m_UniformBuffersMemory;
 	VkDescriptorPool m_DescriptorPool;
 	std::vector<VkDescriptorSet> m_DescriptorSets;
 	uint32_t m_MipLevels;
@@ -2796,7 +1883,6 @@ private:
 	VkDeviceMemory m_DepthImageMemory;
 	VkImageView m_DepthImageView;
 
-	VkSampleCountFlagBits m_msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
 	//In MSAA, each pixel is sampled in an offscreen buffer which is then rendered to the screen.
 	//This new buffer is silghtly different from regular images we've been rendering to, 
