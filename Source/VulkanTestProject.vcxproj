@@ -131,16 +131,22 @@
   <ItemGroup>
     <ClCompile Include="Core\main.cpp" />
     <ClCompile Include="Core\Window.cpp" />
+    <ClCompile Include="Help\HelperMethods.cpp" />
     <ClCompile Include="Vulkan\LogicalDevice.cpp" />
     <ClCompile Include="Vulkan\PhysicalDevice.cpp" />
+    <ClCompile Include="Vulkan\RenderPass.cpp" />
     <ClCompile Include="Vulkan\Surface.cpp" />
+    <ClCompile Include="Vulkan\SwapChain.cpp" />
     <ClCompile Include="Vulkan\VulkanInstance.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Core\Window.h" />
+    <ClInclude Include="Help\HelperMethods.h" />
     <ClInclude Include="Vulkan\LogicalDevice.h" />
     <ClInclude Include="Vulkan\PhysicalDevice.h" />
+    <ClInclude Include="Vulkan\RenderPass.h" />
     <ClInclude Include="Vulkan\Surface.h" />
+    <ClInclude Include="Vulkan\SwapChain.h" />
     <ClInclude Include="Vulkan\VulkanInstance.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
