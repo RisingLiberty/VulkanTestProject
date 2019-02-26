@@ -132,21 +132,35 @@
     <ClCompile Include="Core\main.cpp" />
     <ClCompile Include="Core\Window.cpp" />
     <ClCompile Include="Help\HelperMethods.cpp" />
+    <ClCompile Include="Vulkan\Buffer2D.cpp" />
+    <ClCompile Include="Vulkan\CommandPool.cpp" />
+    <ClCompile Include="Vulkan\DescriptorSetLayout.cpp" />
+    <ClCompile Include="Vulkan\GraphicsPipeline.cpp" />
     <ClCompile Include="Vulkan\LogicalDevice.cpp" />
     <ClCompile Include="Vulkan\PhysicalDevice.cpp" />
+    <ClCompile Include="Vulkan\PipelineLayout.cpp" />
     <ClCompile Include="Vulkan\RenderPass.cpp" />
+    <ClCompile Include="Vulkan\ShaderModule.cpp" />
     <ClCompile Include="Vulkan\Surface.cpp" />
     <ClCompile Include="Vulkan\SwapChain.cpp" />
+    <ClCompile Include="Vulkan\Vertex.cpp" />
     <ClCompile Include="Vulkan\VulkanInstance.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Core\Window.h" />
     <ClInclude Include="Help\HelperMethods.h" />
+    <ClInclude Include="Vulkan\Buffer2D.h" />
+    <ClInclude Include="Vulkan\CommandPool.h" />
+    <ClInclude Include="Vulkan\DescriptorSetLayout.h" />
+    <ClInclude Include="Vulkan\GraphicsPipeline.h" />
     <ClInclude Include="Vulkan\LogicalDevice.h" />
     <ClInclude Include="Vulkan\PhysicalDevice.h" />
+    <ClInclude Include="Vulkan\PipelineLayout.h" />
     <ClInclude Include="Vulkan\RenderPass.h" />
+    <ClInclude Include="Vulkan\ShaderModule.h" />
     <ClInclude Include="Vulkan\Surface.h" />
     <ClInclude Include="Vulkan\SwapChain.h" />
+    <ClInclude Include="Vulkan\Vertex.h" />
     <ClInclude Include="Vulkan\VulkanInstance.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
