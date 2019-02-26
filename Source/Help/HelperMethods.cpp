@@ -1,9 +1,12 @@
 #include "HelperMethods.h"
 
+
 #include "../Vulkan/LogicalDevice.h"
 #include "../Vulkan/PhysicalDevice.h"
+#include "../Vulkan/CommandPool.h"
 
 #include <stdexcept>
+#include <fstream>
 
 VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels, LogicalDevice* pLogicalDevice)
 {
@@ -350,4 +353,157 @@ void CopyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t 
 bool HasStencilComponent(VkFormat format)
 {
 	return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
+}
+
+std::vector<char> ReadFile(const std::string& fileName)
+{
+	//start reading at the end of the file
+	std::ifstream file(fileName, std::ios::ate | std::ios::binary);
+
+	if (!file.is_open())
+		throw std::runtime_error("failed to open file!");
+
+	//because our read position is at the end, we can determine the size of the file and allocate a buffer
+	size_t fileSize = (size_t)file.tellg();
+	std::vector<char> buffer(fileSize);
+
+	//set the read position back to the first char.
+	file.seekg(0);
+	file.read(buffer.data(), fileSize);
+
+	file.close();
+
+	return buffer;
+}
+
+void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels, CommandPool* pCommandPool, LogicalDevice* pCpu)
+{
+	VkCommandBuffer commandBuffer = BeginSingleTimeCommands(pCommandPool->GetPool(), pCpu);
+
+	//One of the most common ways to perform layout transitions is using an image memory barrier.
+	//A pipeline barrier like that is generally used to synchronize access to resources,
+	//like ensuring that a write to a buffer completes before reading from it, but it can also be used
+	//to transition image layours and transfer queue family ownership when VK_SHARING_MODE_EXCLUSIVE is used.
+	//there is an equivalent buffer memory barrier to do this for buffers
+	VkImageMemoryBarrier barrier = {};
+	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+
+	//The first 2 fields specify layout transition. It is possible to use VK_IMAGE_LAYOUT_UNDEFINED
+	//as oldLayout if you don't care about the existing contents of the image.
+	barrier.oldLayout = oldLayout;
+	barrier.newLayout = newLayout;
+
+	//if you are using the barrier to transfer queue family ownership, then these two fields should
+	//be the indices of the queue families. They must be set to VK_QUEUE_FAMILY_IGNORED if you don't want
+	//to do this (not the default value!).
+	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+
+	//The image and subresourceRange specify the image that is affected and the specific part of the image.
+	//Our image is not an array and does not have mipmapping levels, so only one level and layer are specified.
+	barrier.image = image;
+	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	barrier.subresourceRange.baseMipLevel = 0;
+	barrier.subresourceRange.levelCount = mipLevels;
+	barrier.subresourceRange.baseArrayLayer = 0;
+	barrier.subresourceRange.layerCount = 1;
+
+	//Barriers are primarily used for synchronization purposes, so you must specify which types of operations
+	//that involve the resource must happen before the barrier, and which operations that involve the resource
+	//must wait on the barrier. We need to do that despite already using vkQueueWaitIdle to manually synchronize.
+	//The right values depend on the old and new layout, so we'll get back to this once we've figured out which transitions
+	//we're going to use.
+	barrier.srcAccessMask = 0; //TODO
+	barrier.dstAccessMask = 0; //TODO
+
+	if (newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+	{
+		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+		if (HasStencilComponent(format))
+			barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+	}
+	else
+		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+
+	VkPipelineStageFlags sourceStage;
+	VkPipelineStageFlags destinationStage;
+
+	//Validate access masks and pipeline stages in trnasitionImageLayout.
+	//There are 2 that need to be set based on the layouts in the transition.
+	//Undefined --> transfer destination: transfer writes that don't need to wait on anything
+	//transfer destination --> shader reading: shader reads should wait on transfer writes, 
+	//specifically the shader reads in the fragment shader, because that's where we're going to use the texture.
+
+	//Since the writes don't have to wait on anythign, you may specify an empty access mask and 
+	//the earliest possible pipeline stage VK_PIPELINE_sTAGE_TOP_OF_PIPE_BIT for the pre-barrier operations.
+	//It should be noted that VK_PIPELINE_STAGE_TRANSFER_BIT is not a read stage within the graphics and compute pipelines.
+	//It is more of a pseudo-stage where transfers happen. 
+	//See the documentatoin for more information and other examples of pseudo-stages.
+	if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+	{
+		barrier.srcAccessMask = 0;
+		barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+		sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+	}
+
+	//The image will be written in the same pipeline stage and subsequently read by the fragment shader,
+	//which is why we specify shader reading access in the fragment shader pipeline stage.
+	else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+	{
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+		sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+	}
+
+	else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+	{
+		barrier.srcAccessMask = 0;
+		barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+		//The depth buffer will be read from to perform depth tests to see if a fragment is visible,
+		//and will be written to when a new fragment is drawn. The reading happens in the VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESS_BIT stage and
+		//the writing in the VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT. You should pick the earliest pipeline stage that matches the specified
+		//operations, so tha tit is ready for usage as depth attachment when it needs to be.
+		sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+	}
+	else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+	{
+		barrier.srcAccessMask = 0;
+		barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+		sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		destinationStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	}
+	else
+		throw std::invalid_argument("unsupported layout transition!");
+
+	//All types of pipeline barriers are submitted using the same function.
+	//The first parameter after the command buffer speicifes in which pipeline stage the operations occur
+	//that should happen before the barrier. The pipeline stages that you are allowed to specify before and after
+	//the barrier depend on how you use the resource before and after the barrier. The allowed values are listed here:
+	//https://www.khronos.org/registry/vulkan/specs/1.0/html/vkspec.html#synchronization-access-types-supported
+	//For example, if you're going to read from a uniform after the barrier, you would specify a usage of VK_ACCESSS_UNIFORM_READ_BIT
+	//and the earliest shader that will read from the unifrom as pipeline stage, for example VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT.
+	//It would not make sense to specify a no-shader pipeline stage for this type of usage and the validation layers
+	//will warn you when you specify a pipeline stage that does not match the type of usage.
+
+	//The third parameter is either 0 or VK_DEPENDENCY_BY_REGION_BIT. the latter turns the barrier into a per-region condition.
+	//That means that the implementation is allowed to already begin reading from the parts of a resource that were written so far, for example.
+
+	//The last 3 pairs of parameters reference arrays of pipeline barriers of the 3 available types:
+	//memory barriers, buffer memory barriers and image memory barriers like the one we're using here.
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		sourceStage, destinationStage,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &barrier);
+
+	EndSingleTimeCommands(commandBuffer, pCommandPool->GetPool(), pCpu);
 }
