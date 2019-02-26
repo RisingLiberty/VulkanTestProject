@@ -54,6 +54,12 @@
 #include "../Vulkan/LogicalDevice.h"
 #include "../Vulkan/SwapChain.h"
 #include "../Vulkan/RenderPass.h"
+#include "../Vulkan/DescriptorSetLayout.h"
+#include "../Vulkan/PipelineLayout.h"
+#include "../Vulkan/GraphicsPipeline.h"
+#include "../Vulkan/Vertex.h"
+#include "../Vulkan/CommandPool.h"
+#include "../Vulkan/Buffer2D.h"
 
 #include "../Help/HelperMethods.h"
 
@@ -118,91 +124,6 @@ void main()
 //Multiple subpasses
 //Compute shaders
 
-struct Vertex
-{
-	glm::vec3 Position;
-	glm::vec3 Color;
-	glm::vec2 TexCoord;
-
-	static VkVertexInputBindingDescription GetBindingDescription()
-	{
-		//A vertex binding describes at which rate to load data from memory throught the vertices.
-		//It specifies the number of bytes between data entries and wheter to move to the next data entry
-		//after each vertex or after each instance.
-		VkVertexInputBindingDescription bindingDescription = {};
-
-		//all of our per-vertex data is packed together in one array, so we're only going to have one binding.
-		//the binding paramter specifies the index of the binding in the array of bindings.
-		//The stride parameters specifies the number of bytes from one entry to the next
-		//the inputRate parameter can have one of the following values:
-		//VK_VERTEX_INPUT_RATE_VERTEX: move to the next data entry after each vertex
-		//VK_VERTEX_INPUT_RATE_INSTANCE: move to the next data entry after each instance.
-		//we're not going to use instanced rendering, so we'll stick to per-vertex data.
-		bindingDescription.binding = 0;
-		bindingDescription.stride = sizeof(Vertex);
-		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-		return bindingDescription;
-	}
-
-	static std::array<VkVertexInputAttributeDescription, 3> GetAttributeDescriptions()
-	{
-		//The second structure that describes how to handle vertex input is VkVertexInputAttributeDescription.
-		std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions = {};
-
-		//An attribute description struct describes how to extract a vertex attribute from a chuknk of vertex data.
-		//originating from a binding description.
-		//We have 2 attributes, position and color, so we need 2 attribute description structs
-
-		//POSITION
-		//------------------
-
-		//Tells Vulkan from which binding the per-vertex data comes
-		attributeDescriptions[0].binding = 0;
-		//The location parameter references the location directive of the input in the vertex shader
-		//The input in the vertex shader with location 0 is the position, which has 2 32-bit float components
-		attributeDescriptions[0].location = 0;
-		//The format parameter describes the type of data for the attribute.
-		//A bit confusingly, the formata are specified using the same enumeration as color formats.
-		//The following shader types and formats are commonly used together:
-		//float: VK_FORMAT_R32_SFLOAT
-		//vec2: VK_FORMAT_R32G32_SFLOAT
-		//vec3: VK_FORMAT_R32G32B32_SFLOAT
-		//vec4: VK_FORMAT_R32G32B32A32_SFLOAT
-		//The color type (SFLOAT_, UINT, SINT) and bit width should also match the type of the shader input.
-		//Examples:
-		//ivec2: VK_FORMAT_R32G32_SINT, a 2-component vector of 32-bit signed integers
-		//uvec4: VK_FORMAT_R32G32B32A32, a 4-component vector of 32-bit unsigned integers
-		//double: VK_FORMAT_R64_SFLOAT, a double-precision (64-bit) float
-		attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-		//specifies the number of bytes since the start of the per-vertex data to read from.
-		//The bniding is loading one Vertex at a time and the position attribute(Position) i at an offset of 0 bytes
-		//from the beginning of this struct. This is automatically calculated using the offsetof macro.
-		attributeDescriptions[0].offset = offsetof(Vertex, Position);
-
-		//COLOR
-		//-----------------
-		attributeDescriptions[1].binding = 0;
-		attributeDescriptions[1].location = 1;
-		attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-		attributeDescriptions[1].offset = offsetof(Vertex, Color);
-
-		//TEXCOORD
-		//-----------------
-		attributeDescriptions[2].binding = 0;
-		attributeDescriptions[2].location = 2;
-		attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-		attributeDescriptions[2].offset = offsetof(Vertex, TexCoord);
-
-		return attributeDescriptions;
-	}
-
-	bool operator==(const Vertex& other) const
-	{
-		return Position == other.Position && Color == other.Color && TexCoord == other.TexCoord;
-	}
-
-};
 
 namespace std
 {
@@ -215,27 +136,6 @@ namespace std
 				(hash<glm::vec2>()(vertex.TexCoord) << 1);
 		}
 	};
-}
-
-static std::vector<char> ReadFile(const std::string& fileName)
-{
-	//start reading at the end of the file
-	std::ifstream file(fileName, std::ios::ate | std::ios::binary);
-
-	if (!file.is_open())
-		throw std::runtime_error("failed to open file!");
-
-	//because our read position is at the end, we can determine the size of the file and allocate a buffer
-	size_t fileSize = (size_t)file.tellg();
-	std::vector<char> buffer(fileSize);
-
-	//set the read position back to the first char.
-	file.seekg(0);
-	file.read(buffer.data(), fileSize);
-
-	file.close();
-
-	return buffer;
 }
 
 class HelloTriangleApplication
@@ -263,12 +163,13 @@ private:
 		m_UniqueSwapChain = std::make_unique<SwapChain>(m_UniqueGpu.get(), m_UniqueWindow.get(), m_UniqueSurface.get(), m_UniqueCpu.get());
 		m_UniqueSwapChain->CreateImageViews();
 		m_UniqueRenderPass = std::make_unique<RenderPass>(m_UniqueCpu.get(), m_UniqueSwapChain.get(), m_UniqueGpu.get());
-		CreateDescriptorSetLayout();
-		CreateGraphicsPipeline();
-		CreateCommandPool();
+		m_UniqueDescriptorSetLayout = std::make_unique<DescriptorSetLayout>(m_UniqueCpu.get());
+		m_UniquePipeline = std::make_unique<GraphicsPipeline>(m_UniqueCpu.get(), m_UniqueSwapChain.get(), m_UniqueRenderPass.get(), m_UniqueDescriptorSetLayout.get());
+		m_UniqueCommandPool = std::make_unique<CommandPool>(m_UniqueCpu.get(), m_UniqueGpu.get());
+
 		CreateColorResources();
 		CreateDepthResources();
-		m_UniqueSwapChain->CreateFrameBuffers(m_UniqueRenderPass->GetRenderPass(), m_ColorImageView, m_DepthImageView);
+		m_UniqueSwapChain->CreateFrameBuffers(m_UniqueRenderPass->GetRenderPass(), m_UniqueRenderTarget->GetImageView(), m_UniqueDepthBuffer->GetImageView());
 		CreateTextureImage();
 		CreateTextureImageView();
 		CreateTextureSampler();
@@ -298,24 +199,9 @@ private:
 		//Clean vulkan
 		CleanupSwapChain();
 
-		vkDestroyImageView(m_UniqueCpu->GetDevice(), m_ColorImageView, nullptr);
-		vkDestroyImage(m_UniqueCpu->GetDevice(), m_ColorImage, nullptr);
-		vkFreeMemory(m_UniqueCpu->GetDevice(), m_ColorImageMemory, nullptr);
-
-		vkDestroyImage(m_UniqueCpu->GetDevice(), m_DepthImage, nullptr);
-		vkDestroyImageView(m_UniqueCpu->GetDevice(), m_DepthImageView, nullptr);
-		vkFreeMemory(m_UniqueCpu->GetDevice(), m_DepthImageMemory, nullptr);
-
 		vkDestroySampler(m_UniqueCpu->GetDevice(), m_TextureSampler, nullptr);
 
-		vkDestroyImageView(m_UniqueCpu->GetDevice(), m_TextureImageView, nullptr);
-
-		vkDestroyImage(m_UniqueCpu->GetDevice(), m_TextureImage, nullptr);
-		vkFreeMemory(m_UniqueCpu->GetDevice(), m_TextureImageMemory, nullptr);
-
 		vkDestroyDescriptorPool(m_UniqueCpu->GetDevice(), m_DescriptorPool, nullptr);
-
-		vkDestroyDescriptorSetLayout(m_UniqueCpu->GetDevice(), m_DescriptorSetLayout, nullptr);
 
 		vkDestroyBuffer(m_UniqueCpu->GetDevice(), m_IndexBuffer, nullptr);
 		vkFreeMemory(m_UniqueCpu->GetDevice(), m_IndexBufferMemory, nullptr);
@@ -329,8 +215,6 @@ private:
 			vkDestroySemaphore(m_UniqueCpu->GetDevice(), m_ImageAvailableSemaphores[i], nullptr);
 			vkDestroyFence(m_UniqueCpu->GetDevice(), m_InFlightFences[i], nullptr);
 		}
-
-		vkDestroyCommandPool(m_UniqueCpu->GetDevice(), m_CommandPool, nullptr);
 
 		glfwTerminate();
 	}
@@ -387,352 +271,7 @@ private:
 		else
 			throw std::runtime_error("failed to find a suitable GPU!");
 		
-//		m_UniqueRenderPass->SetSamplesCount(GetMaxUsableSampleCount());
-
 		std::cout << "Using: " << m_UniqueGpu->GetDesc().Properties.deviceName << std::endl;
-	}
-
-	void CreateGraphicsPipeline()
-	{
-		std::vector<char> vertShaderCode = ReadFile("../data/shaders/bin/vert.spv");
-		std::vector<char> fragShaderCode = ReadFile("../data/shaders/bin/frag.spv");
-
-		VkShaderModule vertShaderModule = CreateShaderModule(vertShaderCode);
-		VkShaderModule fragShaderModule = CreateShaderModule(fragShaderCode);
-
-		VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
-		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-
-		//the next 2 members specify the shader module containing the code, and the function to invoke.
-		//that means that it's possible to combine multiple fragment shaders into a single shader module and
-		//and use different entry points to differentiate between their behaviors. In this case we'll stick to the standard main.
-
-		//However there is one more (optional) member, pSpecializationInfo, which we won't be using here, but is worth discussing.
-		//It allows you to specify values for shader constants. You can use a single shader module where its behavior
-		//can be used in it. This is more efficient than configuring the shader using variables at render time,
-		//because the compiler can do optimizations like eliminating if statemetns that depend on these values.
-		//If you don't have any constans like that, then you can set the member to nullptr, which our struct initialization does automatically.
-		vertShaderStageInfo.module = vertShaderModule;
-		vertShaderStageInfo.pName = "main";
-
-		VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
-		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-		fragShaderStageInfo.module = fragShaderModule;
-		fragShaderStageInfo.pName = "main";
-
-		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
-
-		VkVertexInputBindingDescription bindingDescription = Vertex::GetBindingDescription();
-		std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions = Vertex::GetAttributeDescriptions();
-
-		//The pVertexBindingDescriptions and pVertexAttributeDescriptions members point to an array
-		//of structs that describe that aformentinoed details for loading vertex data.
-		VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
-		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-		vertexInputInfo.vertexBindingDescriptionCount = 1;
-		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription; //Optional
-		vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
-		vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data(); //Optional
-
-		//Normally, the vertices are loaded from the vertex buffer by index in sequential order,
-		//but with an element buffer you can specify the indices to use yourself.
-		//This allows you to perform optimizations like reusing vertices. If you set the primitiveRestartEnable member to VK_TRUE,
-		//then it's possible to break up lines and triangles in the _STRIP topology modes by using a special index of 0xFFFF or 0xFFFFFFFF
-		VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
-		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-		inputAssembly.primitiveRestartEnable = VK_FALSE;
-
-		VkViewport viewport = {};
-		viewport.x = 0.0f;
-		viewport.y = 0.0f;
-		viewport.width = (float)m_UniqueSwapChain->GetExtent().width;
-		viewport.height = (float)m_UniqueSwapChain->GetExtent().height;
-		viewport.minDepth = 0.0f;
-		viewport.maxDepth = 1.0f;
-
-		VkRect2D scissor = {};
-		scissor.offset = { 0,0 };
-		scissor.extent = m_UniqueSwapChain->GetExtent();
-
-		VkPipelineViewportStateCreateInfo viewportState = {};
-		viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-		viewportState.viewportCount = 1;
-		viewportState.pViewports = &viewport;
-		viewportState.scissorCount = 1;
-		viewportState.pScissors = &scissor;
-
-		//The rasterizer takes the geometry that is shaped by the vertices from the vertex shader and turns
-		//it into fragments to be colored by the fragment shader. It also performs depth testing, face culling and the scissor test,
-		//and it can be configured to output fragments that fill entire polygons or just the edges(wireframe rendering).
-		VkPipelineRasterizationStateCreateInfo rasterizer = {};
-		rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-
-		//if depthClampEnable is set to VK_TRUE, the fragments that are beyond the near and far planes are clamped to them as opposed to discarding them.
-		//this is useful in some special cases like shadow maps. using this requires enabling a GPU feature.
-		rasterizer.depthClampEnable = VK_FALSE;
-
-		//if rasterizerDiscardEnable is set to VK_TRUE, then geometry never passes through the rasterizer stage.
-		//this basically disables any output to the framebuffer.
-		rasterizer.rasterizerDiscardEnable = VK_FALSE;
-
-		//the polygonMode determines how fragments are generated for geometry. the following modes are available:
-		//VK_POLYGON_MODE_FILL: fill the area of the polygon fragments
-		//VK_POLYGON_MODE_LINE: polygon edges are drawn as lines
-		//VK_POLYGON_MODE_POINT: polygon vertices are drawn as points
-		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-
-		//the linewidth member is straightforward, it describes the thickness of lines in terms of number of fragments.
-		//the maximum line widht that is supported depends on the hardware and any line thicker than 1.0f requires you to enable
-		//the wideLines GPU feature
-		rasterizer.lineWidth = 1.0f;
-
-		//the cullMode variable determines the type of face culling to use.
-		//you can disbale culling, cull the front faces, cull the back faces or both.
-		//The frontFace variable specifies the vertex order for faces to be considered front-facing and can be clockwise or counterclockwise.
-		//Because we scale the Y scale axis by -1 we need to draw in counter clockwise order.
-		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-		rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-
-		//the rasterizer can alter the depth values by adding a constant value or biasing them based on a fragment's lsope.
-		//this is sometimes used for shadow mapping, but we won't be using it. just set depthBiasEnable to VK_FALSE
-		rasterizer.depthBiasEnable = VK_FALSE;
-		rasterizer.depthBiasConstantFactor = 0.0f; //Optional
-		rasterizer.depthBiasClamp = 0.0f; //Optional
-		rasterizer.depthBiasSlopeFactor = 0.0f; //Optional
-
-		VkPipelineMultisampleStateCreateInfo multiSampling = {};
-		multiSampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-		multiSampling.sampleShadingEnable = VK_TRUE; //Enable sanple shading in the pipeline
-		multiSampling.rasterizationSamples = m_UniqueRenderPass->GetSamplesCount();
-		multiSampling.minSampleShading = 0.2f; //Optional min fraction for sample shader: closer to one is smoother
-		multiSampling.pSampleMask = nullptr; //Optional
-		multiSampling.alphaToCoverageEnable = VK_FALSE; //Optional
-		multiSampling.alphaToOneEnable = VK_FALSE; //Optional
-
-		VkPipelineColorBlendAttachmentState colorBlendAttachement = {};
-		//There are two types of structs to configure color blending.
-		//The first struct, VkPipelineColorBlendAttachementState contains the configuration per attached framebuffer.
-		//The second struct, VkPipelineColorBlendStateCreateInfo contains the global color blending settings.
-		colorBlendAttachement.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;;
-		colorBlendAttachement.blendEnable = VK_FALSE;
-		colorBlendAttachement.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-		colorBlendAttachement.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO; //Optional
-		colorBlendAttachement.colorBlendOp = VK_BLEND_OP_ADD; //Optional
-		colorBlendAttachement.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; //Optional
-		colorBlendAttachement.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; //Optional
-		colorBlendAttachement.alphaBlendOp = VK_BLEND_OP_ADD; //Optional
-
-		//This per-framebuffer struct allows you to configure the first way of color blending.
-		//the operations that will be performed are best demonstrated using the following pseudocode
-
-		/*
-		if (blendEnable)
-		{
-			finalColor.rgb = (srcColorBlendFactor * newColor.rgb) <colorBlendOp> (dstColorBlendFactor * oldColor.rgb);
-			finalColor.a = (srcAlphaBlendFactor * newColor.a) <alphaBlendOp> (dstAlphaBlendFactor * oldColor.a);
-		}
-
-		else
-			finalColor = newColor;
-		*/
-
-		//if blendEnable is set to VK_FALSE, then the new color from the fragment shader is passed through unmodified.
-		//Otherwise, the two mixing operations are performed to compute a new color.
-		//The resulting color AND'd with the colorWriteMask to determine which channels are actually passed through
-
-		//The most common way to use color blending is to implement alpha blending, where we want the new color to be blended
-		//with the old color based on its opacity. the finalColor should then be computed as follows.
-
-		/*
-		finalColor.rgb = newAlpha * newColor + (1 - newAlpha) * oldColor;
-		finalColor.a = newAlpha.a;
-		*/
-
-		//this can be accomplished with the following parameters
-		/*
-		colorBlendAttachement.blendEnable = VK_TRUE;
-		colorBlendAttachement.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-		colorBlendAttachement.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-		colorBlendAttachement.colorBlendOp = VK_BLEND_OP_ADD;
-		colorBlendAttachement.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-		colorBlendAttachement.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-		colorBlendAttachement.alphaBlendOp = VK_BLEND_OP_ADD;
-		*/
-
-		//the second structure references the array of structures for all of the framebuffers and allows you to 
-		//set blend constants that you can use as blend factors in the aformentioned calculations.
-
-		VkPipelineColorBlendStateCreateInfo colorBlending = {};
-		colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-		colorBlending.logicOpEnable = VK_FALSE;
-		colorBlending.logicOp = VK_LOGIC_OP_COPY; //Optional
-		colorBlending.attachmentCount = 1;
-		colorBlending.pAttachments = &colorBlendAttachement;
-		colorBlending.blendConstants[0] = 0.0f; //Optional
-		colorBlending.blendConstants[1] = 0.0f; //Optional
-		colorBlending.blendConstants[2] = 0.0f; //Optional
-		colorBlending.blendConstants[3] = 0.0f; //Optional
-
-		//If you want to use the second method of blending(bitwise combination), then
-		//you should set logicOpEnable to VK_TRUE. the bitwise operation can then be specified in the logicOp field.
-		//Note that this will automatically disable the first method, as if you had set blendenable to VK_FALSE for every
-		//attached framebuffer! the colorWriteMask will also be used in this mode to determine which channels in the framebuffer
-		//will actually be affected. it is also possible to disable both modes, as we've done here, in which case the fragment colors
-		//will be written to the framebuffer unmodified.
-
-		//A limited amount of the state that we've specified in the previous structs can actually be changed without
-		//recreating the pipeline. Examples are the size of the viewport, line width and blend constants.
-		//Examples are the size of the viewport, line width and blend constant. if you want to do that, then yo'll
-		//have to fill in a VkPipelineDynamicStateCreateInfo structure like this:
-		VkDynamicState dynamicStates[] = {
-			VK_DYNAMIC_STATE_VIEWPORT,
-			VK_DYNAMIC_STATE_LINE_WIDTH
-		};
-
-		VkPipelineDynamicStateCreateInfo dynamicState = {};
-		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-		dynamicState.dynamicStateCount = 2;
-		dynamicState.pDynamicStates = dynamicStates;
-
-		//We need to specifiy the descriptor set layout during pipeline creation to tell Vulkan which descriptors
-		//the shaders will be using. Descriptor set layouts are specified in the pipeline layout objects.
-		//Modify the VkPipelineLayoutCreateInfo to reference the layout object.
-		VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
-		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-		pipelineLayoutInfo.setLayoutCount = 1; //Optional
-		pipelineLayoutInfo.pSetLayouts = &m_DescriptorSetLayout; //Optional
-		pipelineLayoutInfo.pushConstantRangeCount = 0; //Optional
-		pipelineLayoutInfo.pPushConstantRanges = nullptr; //Optional
-
-		if (vkCreatePipelineLayout(m_UniqueCpu->GetDevice(), &pipelineLayoutInfo, nullptr, &m_PipelineLayout) != VK_SUCCESS)
-			throw std::runtime_error("failed to create pipeline layout");
-
-		VkPipelineDepthStencilStateCreateInfo depthStencil = {};
-		depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-
-		//The depthTestEnable field specifies if the depth of new fragments should be compared to the depth buffer
-		//to see if they should be discarded. 
-		depthStencil.depthTestEnable = VK_TRUE;
-
-		//The depthWriteEnable field specifies if the new depth of fragments that pass the depth test should actually
-		//be written to the depth buffer. This is useful for drawing transparent objects.
-		//They should be copmared to the previously rendered opaque objects, but not cause further away transparent objects 
-		//to not be drawn.
-		depthStencil.depthWriteEnable = VK_TRUE;
-
-		//The depthCompareOp field specifies the copmarison that is performed to keep or discard fragments.
-		//We're stikcing to the convention of lower depth = closer, so the depth  of new fragments should be less.
-		depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
-
-		//The depthBoundsTestEnable minDepthBounds and maxDepthBounds fields are used for the optional depth bound test.
-		//Basically, this allows you to only keep fragments that fall within the specified depth range.
-		depthStencil.depthBoundsTestEnable = VK_FALSE;
-		depthStencil.minDepthBounds = 0.0f; //Optional
-		depthStencil.maxDepthBounds = 1.0f; //Optional
-
-		//The last 3 fields configure the stencil buffer operations, which we alse won't be using in this tutorial
-		//If you want to use these operations, then you will have to make sure that the format of the depth/stencil image
-		//contains a stencil components
-		depthStencil.stencilTestEnable = VK_FALSE;
-		depthStencil.front = {}; //Optional
-		depthStencil.back = {}; //Optional		
-
-		VkGraphicsPipelineCreateInfo pipelineInfo = {};
-		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-
-		//Start by referencing the array of vkPipelineShaderStageCreateInfo structs
-		pipelineInfo.stageCount = 2;
-		pipelineInfo.pStages = shaderStages;
-
-		//Reference all of the strucutures describing the fixed function stage
-		pipelineInfo.pVertexInputState = &vertexInputInfo;
-		pipelineInfo.pInputAssemblyState = &inputAssembly;
-		pipelineInfo.pViewportState = &viewportState;
-		pipelineInfo.pRasterizationState = &rasterizer;
-		pipelineInfo.pMultisampleState = &multiSampling;
-		pipelineInfo.pDepthStencilState = &depthStencil; //Optional
-		pipelineInfo.pColorBlendState = &colorBlending;
-		pipelineInfo.pDynamicState = nullptr; //Optional
-
-		//then the pipeline layout, which is a Vulkan handle rather than a struct pointer
-		pipelineInfo.layout = m_PipelineLayout;
-
-		//finally the renderpass and the index of the sub pass where this graphics pipeline will be used
-		//It is also possible to use other render passes with this pipeline instead of this specific instance,
-		//but they have to be compatible with renderPass.
-		//The requirements for caompatibilty are described here <https://www.khronos.org/registry/vulkan/specs/1.0/html/vkspec.html#renderpass-compatibility>, but we wo'nt be using that feauture
-		pipelineInfo.renderPass = m_UniqueRenderPass->GetRenderPass();
-		pipelineInfo.subpass = 0;
-
-		//there are actually 2 more parameters, basePipelineHandle and basePielineIndex.
-		//Vulkan allows you to create a new graphics pipeline by deriving from an existing pipeline.
-		//The idea of pipeline derivatives is that is is less expesnsive to set up pipelines when they have much
-		//functionality in common with an existing pipeline and switching between pipelines from the same parent
-		//pipleline with basePipelineHandle or reference another pipeline that is about to be created by index with basePipelineIndex.
-		//right now there is only a single pipeline, so we'll simply specify a null handle and an invalid index.
-		//These value are only used if the VK_PIPELINE_CREATE_DERIVATIVE_BIT flag is also specified in the flags fields of vkGraphicsPipelinecreateInfo
-		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; //Optional
-		pipelineInfo.basePipelineIndex = -1; //Optional
-
-		//The vkCreateGraphicsPipelines function actually has more parameters than the usual object creation functions in Vulkan.
-		//It is designed to take multiple vkGraphicsPipelineCreateInfo objects and create multiple VkPipeline objects in a single call.
-		//The second parameter for which we've passed VK_NULL_HANDLE argument, references an optional VkPipelineCache object.
-		//A pipeline cahce can be used to store and reuse data relevant to pipeline creation across multiple calls to vkCreateGraphicsPipelines.
-		//and even across program executions if the cache is stored to a file. This makes it possible to significantly speed up pipeline
-		//creatino at a later time.
-		if (vkCreateGraphicsPipelines(m_UniqueCpu->GetDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_GraphicsPipeline) != VK_SUCCESS)
-			throw std::runtime_error("failed to create graphics pipeline!");
-
-		vkDestroyShaderModule(m_UniqueCpu->GetDevice(), fragShaderModule, nullptr);
-		vkDestroyShaderModule(m_UniqueCpu->GetDevice(), vertShaderModule, nullptr);
-	}
-
-	VkShaderModule CreateShaderModule(const std::vector<char>& code)
-	{
-		//The one catch is that the sizeof the bytecode is specified in bytes, but the bytecode pointer is a
-		//uint32_t pointer rather than a char pointer. Therefore we will need to cast the pointer with a reinterpret_cast
-		//as shown below. When you perform a cast like this, you also need to ensure that the data satisfies the alignment
-		//requirements of uint32_t. lucky for us, the data is stored in an std:vector where the default allocator already
-		//ensure that the data satisfies the worst case alignment requirements.
-		VkShaderModuleCreateInfo createInfo = {};
-		createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-		createInfo.codeSize = code.size();
-		createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
-
-		VkShaderModule shaderModule;
-		if (vkCreateShaderModule(m_UniqueCpu->GetDevice(), &createInfo, nullptr, &shaderModule) != VK_SUCCESS)
-			throw std::runtime_error("failed to create shader module!");
-
-		return shaderModule;
-	}
-
-	void CreateCommandPool()
-	{
-		const QueueFamilyIndices queueFamilyIndices = m_UniqueGpu->GetDesc().QueueIndices;
-
-		//Command buffers are executed by submitting them on one of the device queues, like the graphics and presentation queues we retrieved.
-		//Each command pool can only allocate command buffers that are submitted on a single type of queue.
-		//We're going to record command for drawing, which is why we've chosen the graphics queue family.
-
-		VkCommandPoolCreateInfo poolInfo = {};
-		poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-		poolInfo.queueFamilyIndex = queueFamilyIndices.GraphicsFamily;
-
-		//there are two possible flags fro command pools:
-		//VK_COMMAND_POOL_CREATE_TRANSIENT_BIT: hint that command buffers are rerecorded with new command very often
-		//This may change memory allocatoin behaviour)
-
-		//VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT: Allow command buffers to be rerecorded individaully, without this flag they all have to be reset together.
-
-		//We will only record the command buffers at the beginning of the program and then execute them many times
-		//in the main loop, so we're not going to use either of these flags.
-		poolInfo.flags = 0; //Optional
-
-		if (vkCreateCommandPool(m_UniqueCpu->GetDevice(), &poolInfo, nullptr, &m_CommandPool) != VK_SUCCESS)
-			throw std::runtime_error("failed to create command pool!");
 	}
 
 	void CreateCommandBuffers()
@@ -741,7 +280,7 @@ private:
 
 		VkCommandBufferAllocateInfo allocInfo = {};
 		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-		allocInfo.commandPool = m_CommandPool;
+		allocInfo.commandPool = m_UniqueCommandPool->GetPool();
 
 		//The level parameter specifies if the allocated command buffers are primary or secondary command buffers.
 		//VK_COMMAND_BUFFER_LEVEL_PRIMARY: Can be submitted to a queue for exection, but cannot be called from other command buffers.
@@ -803,7 +342,7 @@ private:
 			//VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS: The render pass commands iwll be executed from secondary command buffers.
 			vkCmdBeginRenderPass(m_CommandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-			vkCmdBindPipeline(m_CommandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, m_GraphicsPipeline);
+			vkCmdBindPipeline(m_CommandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, m_UniquePipeline->GetPipeline());
 
 			VkBuffer vertexBuffers[] = { m_VertexBuffer };
 			VkDeviceSize offsets[] = { 0 };
@@ -833,7 +372,7 @@ private:
 			//The next 3 parameters specify the index of the first descriptor set, the number of sets to bind and
 			//the array of sets to bind.
 			//The last 2 parameetres specify an array of offsets that are used for dynamic descriptors.
-			vkCmdBindDescriptorSets(m_CommandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout, 0, 1, &m_DescriptorSets[i], 0, nullptr);
+			vkCmdBindDescriptorSets(m_CommandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, m_UniquePipeline->GetLayout()->GetPipelineLayout(), 0, 1, &m_DescriptorSets[i], 0, nullptr);
 
 			//A call to this funtion is very similar to vkCmdDraw. the first 2 parameters specify the number of indices
 			//and the number of instances. We're not using instancing, so just specify 1 instance.
@@ -1028,9 +567,9 @@ private:
 
 		//Instead of destroying the command pool, we just clean up the exisiting command buffers
 		//with vkFreeCommandBuffers. This way we can reuse the existing pool to allocate the new command buffers.
-		vkFreeCommandBuffers(m_UniqueCpu->GetDevice(), m_CommandPool, static_cast<uint32_t>(m_CommandBuffers.size()), m_CommandBuffers.data());
-		vkDestroyPipeline(m_UniqueCpu->GetDevice(), m_GraphicsPipeline, nullptr);
-		vkDestroyPipelineLayout(m_UniqueCpu->GetDevice(), m_PipelineLayout, nullptr);
+		vkFreeCommandBuffers(m_UniqueCpu->GetDevice(), m_UniqueCommandPool->GetPool(), static_cast<uint32_t>(m_CommandBuffers.size()), m_CommandBuffers.data());
+		vkDestroyPipeline(m_UniqueCpu->GetDevice(), m_UniquePipeline->GetPipeline(), nullptr);
+		vkDestroyPipelineLayout(m_UniqueCpu->GetDevice(), m_UniquePipeline->GetLayout()->GetPipelineLayout(), nullptr);
 		//vkDestroyRenderPass(m_UniqueCpu->GetDevice(), m_UniqueRenderPass->GetRenderPass() , nullptr);
 
 		for (size_t i = 0; i < m_UniqueSwapChain->GetImageViews().size(); ++i)
@@ -1070,7 +609,7 @@ private:
 
 		//Viewport and scissor rectangles size is speciifed during graphics pipeline creation, so the pipeline
 		//also needs to be rebuilt. it is possible to avoid this by using dynamic state for the viewports and scissor rectangles.
-		CreateGraphicsPipeline();
+		//CreateGraphicsPipeline();
 
 		CreateColorResources();
 
@@ -1117,7 +656,7 @@ private:
 		vkUnmapMemory(m_UniqueCpu->GetDevice(), stagingBufferMemory);
 
 		CreateBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_VertexBuffer, m_VertexBufferMemory, m_UniqueCpu.get(), m_UniqueGpu.get());
-		CopyBuffer(staginBuffer, m_VertexBuffer, bufferSize, m_CommandPool, m_UniqueCpu.get());
+		CopyBuffer(staginBuffer, m_VertexBuffer, bufferSize, m_UniqueCommandPool->GetPool(), m_UniqueCpu.get());
 
 		vkDestroyBuffer(m_UniqueCpu->GetDevice(), staginBuffer, nullptr);
 		vkFreeMemory(m_UniqueCpu->GetDevice(), stagingBufferMemory, nullptr);
@@ -1169,57 +708,10 @@ private:
 
 		CreateBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_IndexBuffer, m_IndexBufferMemory, m_UniqueCpu.get(), m_UniqueGpu.get());
 
-		CopyBuffer(stagingBuffer, m_IndexBuffer, bufferSize, m_CommandPool, m_UniqueCpu.get());
+		CopyBuffer(stagingBuffer, m_IndexBuffer, bufferSize, m_UniqueCommandPool->GetPool(), m_UniqueCpu.get());
 
 		vkDestroyBuffer(m_UniqueCpu->GetDevice(), stagingBuffer, nullptr);
 		vkFreeMemory(m_UniqueCpu->GetDevice(), stagingBufferMemory, nullptr);
-	}
-
-	void CreateDescriptorSetLayout()
-	{
-		//Every binding needs to be described through a VkDescriptorSetLayoutBinding
-		VkDescriptorSetLayoutBinding uboLayoutBinding = {};
-
-		//The first 2 fields specify the binding used in the shader and the type of descriptor,
-		//which is a uniform buffer object.
-		//It is possible for the shader variable to represent an array of uniform buffer objects,
-		//and descriptorCount specifies the number of values in the array. 
-		//This could be used to specify a transformatoin for each of the bones in a skeleton for skeletal animation, for example.
-		//Our MVP transformation is in a single uniform buffer object, so we're using a descriptorCount of 1.
-		uboLayoutBinding.binding = 0;
-		uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		uboLayoutBinding.descriptorCount = 1;
-
-		//We also need to specify in which shader stages the descriptor is going to be referenced.
-		//The stageFlags field can be a combination of VkShaderStageFlagBits values or the value VK_SHADER_STAGE_ALL_GRAPHICS.
-		//In our case, we're only referencing the descriptor from the vertex shader.
-		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
-		//The pImmutableSamplers field is only relevant for image sampling related descriptors.
-		uboLayoutBinding.pImmutableSamplers = nullptr; //Optional
-
-		VkDescriptorSetLayoutBinding samplerLayoutBinding = {};
-		samplerLayoutBinding.binding = 1;
-		samplerLayoutBinding.descriptorCount = 1;
-		samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		samplerLayoutBinding.pImmutableSamplers = nullptr;
-
-		//Make sure to set the stageFlags to indicate that we intend to use the combinded image sampler
-		//descriptor in the fragment shader. That's where the color of the fragment is going to be determined.
-		//It is possible to use texture sampling in the vertex shader, for example to dynamically deform a grid
-		//of vertices by a heightmap.
-		samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-		std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, samplerLayoutBinding };
-
-		//All of the descriptor binding are combinded into a single VkDescriptorSetLayout object.
-		VkDescriptorSetLayoutCreateInfo layoutInfo = {};
-		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-		layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-		layoutInfo.pBindings = bindings.data();
-
-		if (vkCreateDescriptorSetLayout(m_UniqueCpu->GetDevice(), &layoutInfo, nullptr, &m_DescriptorSetLayout) != VK_SUCCESS)
-			throw std::runtime_error("failed to create descriptor set layout!");
 	}
 
 	void CreateDescriptorPool()
@@ -1259,7 +751,7 @@ private:
 		//You need to specify the desriptor pool to allocate from, the number of descriptors sets to allocate
 		//and the descriptor layour to base them on.
 
-		std::vector<VkDescriptorSetLayout> layouts(m_UniqueSwapChain->GetImages().size(), m_DescriptorSetLayout);
+		std::vector<VkDescriptorSetLayout> layouts(m_UniqueSwapChain->GetImages().size(), m_UniqueDescriptorSetLayout->GetDescriptorSetLayout());
 
 		//In our case, we will create one descriptor set for each swap chain image, all with the same layout.
 		//Unfortunately we do need all the copies of the layour because the next function expects an array matching the numbers of sets.
@@ -1297,7 +789,7 @@ private:
 			//just like the buffer resource for a uniform buffer descriptor is specified in a VkDescriptorBufferInfo struct.
 			VkDescriptorImageInfo imageInfo = {};
 			imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-			imageInfo.imageView = m_TextureImageView;
+			imageInfo.imageView = m_UniqueTexture->GetImageView();
 			imageInfo.sampler = m_TextureSampler;
 
 			//The first 2 fields specify the descriptor set to update and the binding.
@@ -1408,8 +900,8 @@ private:
 
 		//The image was created with the VK_IMAGE_LAYOUT_UNDEFFINED layout, so that one should be specified as old layout 
 		//when transitioning textureImage.
-		TransitionImageLayout(m_TextureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, m_MipLevels);
-		CopyBufferToImage(stagingBuffer, m_TextureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), m_CommandPool, m_UniqueCpu.get());
+		TransitionImageLayout(m_TextureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, m_MipLevels, m_UniqueCommandPool.get(), m_UniqueCpu.get());
+		CopyBufferToImage(stagingBuffer, m_TextureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), m_UniqueCommandPool->GetPool(), m_UniqueCpu.get());
 
 		GenerateMipMaps(m_TextureImage, VK_FORMAT_R8G8B8A8_UNORM, texWidth, texHeight, m_MipLevels);
 		//To be able to start sampling from the texture image in the shader, we need one last transition
@@ -1418,138 +910,6 @@ private:
 		vkDestroyBuffer(m_UniqueCpu->GetDevice(), stagingBuffer, nullptr);
 		vkFreeMemory(m_UniqueCpu->GetDevice(), stagingBufferMemory, nullptr);
 
-	}
-
-	void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels)
-	{
-		VkCommandBuffer commandBuffer = BeginSingleTimeCommands(m_CommandPool, m_UniqueCpu.get());
-
-		//One of the most common ways to perform layout transitions is using an image memory barrier.
-		//A pipeline barrier like that is generally used to synchronize access to resources,
-		//like ensuring that a write to a buffer completes before reading from it, but it can also be used
-		//to transition image layours and transfer queue family ownership when VK_SHARING_MODE_EXCLUSIVE is used.
-		//there is an equivalent buffer memory barrier to do this for buffers
-		VkImageMemoryBarrier barrier = {};
-		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-
-		//The first 2 fields specify layout transition. It is possible to use VK_IMAGE_LAYOUT_UNDEFINED
-		//as oldLayout if you don't care about the existing contents of the image.
-		barrier.oldLayout = oldLayout;
-		barrier.newLayout = newLayout;
-
-		//if you are using the barrier to transfer queue family ownership, then these two fields should
-		//be the indices of the queue families. They must be set to VK_QUEUE_FAMILY_IGNORED if you don't want
-		//to do this (not the default value!).
-		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-
-		//The image and subresourceRange specify the image that is affected and the specific part of the image.
-		//Our image is not an array and does not have mipmapping levels, so only one level and layer are specified.
-		barrier.image = image;
-		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		barrier.subresourceRange.baseMipLevel = 0;
-		barrier.subresourceRange.levelCount = mipLevels;
-		barrier.subresourceRange.baseArrayLayer = 0;
-		barrier.subresourceRange.layerCount = 1;
-
-		//Barriers are primarily used for synchronization purposes, so you must specify which types of operations
-		//that involve the resource must happen before the barrier, and which operations that involve the resource
-		//must wait on the barrier. We need to do that despite already using vkQueueWaitIdle to manually synchronize.
-		//The right values depend on the old and new layout, so we'll get back to this once we've figured out which transitions
-		//we're going to use.
-		barrier.srcAccessMask = 0; //TODO
-		barrier.dstAccessMask = 0; //TODO
-
-		if (newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-		{
-			barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-			if (HasStencilComponent(format))
-				barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
-		}
-		else
-			barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-
-		VkPipelineStageFlags sourceStage;
-		VkPipelineStageFlags destinationStage;
-
-		//Validate access masks and pipeline stages in trnasitionImageLayout.
-		//There are 2 that need to be set based on the layouts in the transition.
-		//Undefined --> transfer destination: transfer writes that don't need to wait on anything
-		//transfer destination --> shader reading: shader reads should wait on transfer writes, 
-		//specifically the shader reads in the fragment shader, because that's where we're going to use the texture.
-
-		//Since the writes don't have to wait on anythign, you may specify an empty access mask and 
-		//the earliest possible pipeline stage VK_PIPELINE_sTAGE_TOP_OF_PIPE_BIT for the pre-barrier operations.
-		//It should be noted that VK_PIPELINE_STAGE_TRANSFER_BIT is not a read stage within the graphics and compute pipelines.
-		//It is more of a pseudo-stage where transfers happen. 
-		//See the documentatoin for more information and other examples of pseudo-stages.
-		if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-		{
-			barrier.srcAccessMask = 0;
-			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-			sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-			destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-		}
-
-		//The image will be written in the same pipeline stage and subsequently read by the fragment shader,
-		//which is why we specify shader reading access in the fragment shader pipeline stage.
-		else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-		{
-			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-			sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-			destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-		}
-
-		else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-		{
-			barrier.srcAccessMask = 0;
-			barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-			//The depth buffer will be read from to perform depth tests to see if a fragment is visible,
-			//and will be written to when a new fragment is drawn. The reading happens in the VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESS_BIT stage and
-			//the writing in the VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT. You should pick the earliest pipeline stage that matches the specified
-			//operations, so tha tit is ready for usage as depth attachment when it needs to be.
-			sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-			destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-		}
-		else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
-		{
-			barrier.srcAccessMask = 0;
-			barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-			
-			sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-			destinationStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		}
-		else
-			throw std::invalid_argument("unsupported layout transition!");
-
-		//All types of pipeline barriers are submitted using the same function.
-		//The first parameter after the command buffer speicifes in which pipeline stage the operations occur
-		//that should happen before the barrier. The pipeline stages that you are allowed to specify before and after
-		//the barrier depend on how you use the resource before and after the barrier. The allowed values are listed here:
-		//https://www.khronos.org/registry/vulkan/specs/1.0/html/vkspec.html#synchronization-access-types-supported
-		//For example, if you're going to read from a uniform after the barrier, you would specify a usage of VK_ACCESSS_UNIFORM_READ_BIT
-		//and the earliest shader that will read from the unifrom as pipeline stage, for example VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT.
-		//It would not make sense to specify a no-shader pipeline stage for this type of usage and the validation layers
-		//will warn you when you specify a pipeline stage that does not match the type of usage.
-
-		//The third parameter is either 0 or VK_DEPENDENCY_BY_REGION_BIT. the latter turns the barrier into a per-region condition.
-		//That means that the implementation is allowed to already begin reading from the parts of a resource that were written so far, for example.
-
-		//The last 3 pairs of parameters reference arrays of pipeline barriers of the 3 available types:
-		//memory barriers, buffer memory barriers and image memory barriers like the one we're using here.
-		vkCmdPipelineBarrier(
-			commandBuffer,
-			sourceStage, destinationStage,
-			0,
-			0, nullptr,
-			0, nullptr,
-			1, &barrier);
-
-		EndSingleTimeCommands(commandBuffer, m_CommandPool, m_UniqueCpu.get());
 	}
 
 	void CreateTextureImageView()
@@ -1640,13 +1000,15 @@ private:
 		//VK_FORMAT_D32_SFLOAT_S8_UINT: 32-bit signed float for depth and 8 bit stencil component
 		//VK_FORMAT_D24_UNORM_S8_UINT: 24-bit float for depth and 8 bit stencil component
 		//The stencil component is used for stencil tests, which is an additional test that can be combined with depth testing.
-		VkFormat depthFormat = FindDepthFormat(m_UniqueGpu.get());
-		CreateImage(m_UniqueSwapChain->GetExtent().width, m_UniqueSwapChain->GetExtent().height, 1, m_UniqueRenderPass->GetSamplesCount(), depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_DepthImage, m_DepthImageMemory, m_UniqueCpu.get(), m_UniqueGpu.get());
-		m_DepthImageView = CreateImageView(m_DepthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1, m_UniqueCpu.get());
+		m_UniqueDepthBuffer = std::make_unique<Buffer2D>(m_UniqueCpu.get(), m_UniqueCommandPool.get(), m_UniqueRenderPass.get(), m_UniqueSwapChain.get(), m_UniqueGpu.get(), VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, FindDepthFormat(m_UniqueGpu.get()));
 
-		//The undefined layout can be used as initial layout, becasue there are no existing depth image contets that matter.
-		//We need to update some of the logic in transitionImageLayout to use the right subrouse aspect.
-		TransitionImageLayout(m_DepthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1);
+		//VkFormat depthFormat = FindDepthFormat(m_UniqueGpu.get());
+		//CreateImage(m_UniqueSwapChain->GetExtent().width, m_UniqueSwapChain->GetExtent().height, 1, m_UniqueRenderPass->GetSamplesCount(), depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_DepthImage, m_DepthImageMemory, m_UniqueCpu.get(), m_UniqueGpu.get());
+		//m_DepthImageView = CreateImageView(m_DepthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1, m_UniqueCpu.get());
+
+		////The undefined layout can be used as initial layout, becasue there are no existing depth image contets that matter.
+		////We need to update some of the logic in transitionImageLayout to use the right subrouse aspect.
+		//TransitionImageLayout(m_DepthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1, m_UniqueCommandPool.get(), m_UniqueCpu.get());
 
 	}
 
@@ -1717,6 +1079,8 @@ private:
 				m_Indices.push_back(uniqueVertices[vertex]);
 			}
 		}
+
+		std::cout << "[loaded model]" << std::endl;
 	}
 
 	void GenerateMipMaps(VkImage image, VkFormat format, int32_t texWidth, int32_t texHeight, uint32_t mipLevels)
@@ -1740,7 +1104,7 @@ private:
 		if (!(formatProps.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
 			throw std::runtime_error("texture image format does not support linear blitting!");
 
-		VkCommandBuffer commandBuffer = BeginSingleTimeCommands(m_CommandPool, m_UniqueCpu.get());
+		VkCommandBuffer commandBuffer = BeginSingleTimeCommands(m_UniqueCommandPool->GetPool(), m_UniqueCpu.get());
 
 		VkImageMemoryBarrier barrier = {};
 		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -1823,12 +1187,17 @@ private:
 
 		vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 
-		EndSingleTimeCommands(commandBuffer, m_CommandPool, m_UniqueCpu.get());
+		EndSingleTimeCommands(commandBuffer, m_UniqueCommandPool->GetPool(), m_UniqueCpu.get());
 	}
 
 	void CreateColorResources()
 	{
-		VkFormat colorFormat = m_UniqueSwapChain->GetFormat();
+		m_UniqueRenderTarget = std::make_unique<Buffer2D>(m_UniqueCpu.get(), m_UniqueCommandPool.get(),m_UniqueRenderPass.get(), m_UniqueGpu.get(),
+			m_UniqueSwapChain->GetExtent().width, m_UniqueSwapChain->GetExtent().height, 
+			VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
+			m_UniqueSwapChain->GetFormat(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+		/*VkFormat colorFormat = m_UniqueSwapChain->GetFormat();
 
 		CreateImage(m_UniqueSwapChain->GetExtent().width, m_UniqueSwapChain->GetExtent().height, 1,
 			m_UniqueRenderPass->GetSamplesCount(), colorFormat,
@@ -1839,7 +1208,7 @@ private:
 
 		m_ColorImageView = CreateImageView(m_ColorImage, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1, m_UniqueCpu.get());
 
-		TransitionImageLayout(m_ColorImage, colorFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1);
+		TransitionImageLayout(m_ColorImage, colorFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, m_UniqueCommandPool.get(), m_UniqueCpu.get());*/
 	}
 
 private:
@@ -1850,39 +1219,9 @@ private:
 	std::unique_ptr<LogicalDevice> m_UniqueCpu;
 	std::unique_ptr<SwapChain> m_UniqueSwapChain;
 	std::unique_ptr<RenderPass> m_UniqueRenderPass;
-	VkSampleCountFlagBits m_msaaSamples;
-	
-	VkPipelineLayout m_PipelineLayout = {};
-	VkPipeline m_GraphicsPipeline;
-	VkCommandPool m_CommandPool;
-	std::vector<VkCommandBuffer> m_CommandBuffers;
-	//VkSemaphore m_ImageAvailableSemaphore;
-	//VkSemaphore m_RenderFinishedSemaphore;
-	//Each frame should have its own set of semaphores
-	std::vector<VkSemaphore> m_ImageAvailableSemaphores;
-	std::vector<VkSemaphore> m_RenderFinishedSemaphores;
-	std::vector<VkFence> m_InFlightFences;
-	size_t m_CurrentFrame = 0;
-	bool m_FrameBufferResized = false;
-	VkBuffer m_VertexBuffer;
-	VkDeviceMemory m_VertexBufferMemory;
-	//Just like the vertex data, the indices need to be uploaded into a VkBuffer for the GPU to be able to access them.
-	VkBuffer m_IndexBuffer;
-	VkDeviceMemory m_IndexBufferMemory;
-	VkDescriptorSetLayout m_DescriptorSetLayout;
-	VkDescriptorPool m_DescriptorPool;
-	std::vector<VkDescriptorSet> m_DescriptorSets;
-	uint32_t m_MipLevels;
-	VkImage m_TextureImage;
-	VkDeviceMemory m_TextureImageMemory;
-	VkImageView m_TextureImageView;
-	VkSampler m_TextureSampler;
-
-	//Another trifecta of resources
-	VkImage m_DepthImage;
-	VkDeviceMemory m_DepthImageMemory;
-	VkImageView m_DepthImageView;
-
+	std::unique_ptr<DescriptorSetLayout> m_UniqueDescriptorSetLayout;
+	std::unique_ptr<GraphicsPipeline> m_UniquePipeline;
+	std::unique_ptr<CommandPool> m_UniqueCommandPool;
 
 	//In MSAA, each pixel is sampled in an offscreen buffer which is then rendered to the screen.
 	//This new buffer is silghtly different from regular images we've been rendering to, 
@@ -1891,14 +1230,34 @@ private:
 	//This is why we have to create an additional render target and modifgy our current drawing procsess.
 	//We only need one render target since only one drawing operation is actie at a time, just like with
 	//the depth buffer.
-	VkImage m_ColorImage;
-	VkDeviceMemory m_ColorImageMemory;
-	VkImageView m_ColorImageView;
+	std::unique_ptr<Buffer2D> m_UniqueRenderTarget;
+	std::unique_ptr<Buffer2D> m_UniqueDepthBuffer;
+	std::unique_ptr<Buffer2D> m_UniqueTexture;
+
+	std::vector<VkCommandBuffer> m_CommandBuffers;
+
+	//Each frame should have its own set of semaphores
+	std::vector<VkSemaphore> m_ImageAvailableSemaphores;
+	std::vector<VkSemaphore> m_RenderFinishedSemaphores;
+	std::vector<VkFence> m_InFlightFences;
+	size_t m_CurrentFrame = 0;
+	bool m_FrameBufferResized = false;
+	VkBuffer m_VertexBuffer;
+	VkDeviceMemory m_VertexBufferMemory;
+
+	//Just like the vertex data, the indices need to be uploaded into a VkBuffer for the GPU to be able to access them.
+	VkBuffer m_IndexBuffer;
+	VkDeviceMemory m_IndexBufferMemory;
+	VkDescriptorPool m_DescriptorPool;
+	std::vector<VkDescriptorSet> m_DescriptorSets;
+	uint32_t m_MipLevels;
+	//VkImage m_TextureImage;
+	//VkDeviceMemory m_TextureImageMemory;
+	//VkImageView m_TextureImageView;
+	VkSampler m_TextureSampler;
 
 	const std::vector<const char*> m_ValidationLayers = { "VK_LAYER_LUNARG_standard_validation" };
 	const std::vector<const char*> m_DeviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
-
-
 
 	const int MAX_FRAMES_IN_FLIGHT = 2;
 
