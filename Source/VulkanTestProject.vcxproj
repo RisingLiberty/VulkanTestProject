@@ -135,6 +135,7 @@
     <ClCompile Include="Help\HelperMethods.cpp" />
     <ClCompile Include="Vulkan\Buffer2D.cpp" />
     <ClCompile Include="Vulkan\CommandPool.cpp" />
+    <ClCompile Include="Vulkan\DepthBuffer.cpp" />
     <ClCompile Include="Vulkan\DescriptorPool.cpp" />
     <ClCompile Include="Vulkan\DescriptorSetLayout.cpp" />
     <ClCompile Include="Vulkan\Fence.cpp" />
@@ -160,6 +161,7 @@
     <ClInclude Include="Help\HelperMethods.h" />
     <ClInclude Include="Vulkan\Buffer2D.h" />
     <ClInclude Include="Vulkan\CommandPool.h" />
+    <ClInclude Include="Vulkan\DepthBuffer.h" />
     <ClInclude Include="Vulkan\DescriptorPool.h" />
     <ClInclude Include="Vulkan\DescriptorSetLayout.h" />
     <ClInclude Include="Vulkan\Fence.h" />

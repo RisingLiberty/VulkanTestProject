@@ -18,6 +18,5 @@ public:
 
 private:
 	VkSemaphore m_Semaphore;
-
 	LogicalDevice* m_pCpu;
 };

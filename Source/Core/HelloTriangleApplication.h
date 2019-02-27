@@ -5,6 +5,9 @@
 #include <string>
 
 #include "../Vulkan/Vertex.h"
+#include "../Vulkan/Semaphore.h"
+#include "../Vulkan/Fence.h"
+
 
 //GLFW Defines and includes
 #ifndef	GLFW_INCLUDE_VULKAN
@@ -30,6 +33,7 @@ class TextureSampler;
 class GraphicsPipeline;
 class Semaphore;
 class Fence;
+class DepthBuffer;
 
 class HelloTriangleApplication
 {
@@ -57,7 +61,6 @@ private:
 	//However, we do get a reference to the GLFWwindow in the callback and there is another GLFW function that
 	//allows you to store an arbitrary pointer inside of it: glfwSetWindowUserPointer
 	static void FrameBufferResizeCallback(GLFWwindow* pWindow, int width, int height);
-	void CreateDepthResources();
 
 private:
 	std::unique_ptr<Window> m_UniqueWindow;
@@ -80,16 +83,16 @@ private:
 	//We only need one render target since only one drawing operation is actie at a time, just like with
 	//the depth buffer.
 	std::unique_ptr<Buffer2D> m_UniqueRenderTarget;
-	std::unique_ptr<Buffer2D> m_UniqueDepthBuffer;
+	std::unique_ptr<DepthBuffer> m_UniqueDepthBuffer;
 	std::unique_ptr<Texture> m_UniqueTexture;
 	std::unique_ptr<VertexBuffer> m_UniqueVertexBuffer;
 	std::unique_ptr<IndexBuffer> m_UniqueIndexBuffer;
 	std::unique_ptr<DescriptorPool> m_UniqueDescriptorPool;
 
 	//Each frame should have its own set of semaphores
-	std::vector<Semaphore> m_ImageAvailableSemaphores;
-	std::vector<Semaphore> m_RenderFinishedSemaphores;
-	std::vector<Fence> m_InFlightFences;
+	std::vector<std::unique_ptr<Semaphore>> m_ImageAvailableSemaphores;
+	std::vector<std::unique_ptr<Semaphore>> m_RenderFinishedSemaphores;
+	std::vector<std::unique_ptr<Fence>> m_InFlightFences;
 
 	//std::vector<VkSemaphore> m_ImageAvailableSemaphores;
 	//std::vector<VkSemaphore> m_RenderFinishedSemaphores;

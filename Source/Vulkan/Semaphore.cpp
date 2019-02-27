@@ -11,6 +11,7 @@ Semaphore::Semaphore(LogicalDevice* pCpu):
 	semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 	if (vkCreateSemaphore(pCpu->GetDevice(), &semaphoreInfo, nullptr, &m_Semaphore) != VK_SUCCESS)
 		throw std::runtime_error("Failed to create semaphore");
+
 }
 
 Semaphore::~Semaphore()

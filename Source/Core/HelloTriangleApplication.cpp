@@ -59,6 +59,7 @@
 #include "../Vulkan/DescriptorPool.h"
 #include "../Vulkan/Semaphore.h"
 #include "../Vulkan/Fence.h"
+#include "../Vulkan/DepthBuffer.h"
 
 #include "../Help/HelperMethods.h"
 
@@ -159,13 +160,13 @@ void HelloTriangleApplication::InitializeVulkan()
 		VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 		m_UniqueSwapChain->GetFormat(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
-	CreateDepthResources();
-	m_UniqueSwapChain->CreateFrameBuffers(m_UniqueRenderPass->GetRenderPass(), m_UniqueRenderTarget->GetImageView(), m_UniqueDepthBuffer->GetImageView());
+	m_UniqueDepthBuffer = std::make_unique<DepthBuffer>(m_UniqueCpu.get(), m_UniqueCommandPool.get(), m_UniqueRenderPass.get(), m_UniqueGpu.get(), m_UniqueSwapChain->GetExtent().width, m_UniqueSwapChain->GetExtent().height);
+	m_UniqueSwapChain->CreateFrameBuffers(m_UniqueRenderPass->GetRenderPass(), m_UniqueRenderTarget->GetImageView(), m_UniqueDepthBuffer->GetBuffer()->GetImageView());
 	m_UniqueTexture = std::make_unique<Texture>(m_UniqueCpu.get(), m_UniqueGpu.get(), m_UniqueCommandPool.get());
 	m_UniqueSampler = std::make_unique<TextureSampler>(m_UniqueCpu.get(), m_UniqueTexture->GetSamples());
 
 	LoadModel(m_Vertices, m_Indices, MODEL_PATH);
-	std::cout << "[Model loaded]";
+	std::cout << "[Model loaded]\n";
 
 	m_UniqueVertexBuffer = std::make_unique<VertexBuffer>(m_UniqueCpu.get(), m_UniqueGpu.get(), m_UniqueCommandPool.get(), m_Vertices);
 	m_UniqueIndexBuffer = std::make_unique<IndexBuffer>(m_UniqueCpu.get(), m_UniqueGpu.get(), m_UniqueCommandPool.get(), m_Indices);
@@ -191,9 +192,6 @@ void HelloTriangleApplication::MainLoop()
 
 void HelloTriangleApplication::Cleanup()
 {
-	//Clean vulkan
-	//CleanupSwapChain();
-
 	glfwTerminate();
 }
 
@@ -262,7 +260,7 @@ void HelloTriangleApplication::DrawFrame()
 	//The vkWaitForFences function takes an array of fences and wait for either any or all of them to be signaled before returning.
 	//The VK_TRUE we pass here indicates that we want to wait for all fences, but in the case of a single one it obviouslt doesn't matter.
 	//just like vkAcquireNExtImageKHR this function also takes a timeout. 
-	vkWaitForFences(m_UniqueCpu->GetDevice(), 1, &m_InFlightFences[m_CurrentFrame].GetFence(), VK_TRUE, std::numeric_limits<uint64_t>::max());
+	vkWaitForFences(m_UniqueCpu->GetDevice(), 1, &m_InFlightFences[m_CurrentFrame]->GetFence(), VK_TRUE, std::numeric_limits<uint64_t>::max());
 
 	//The function calls that get called in this method will return before the operations are actually finished,
 	//and the order of execution is also undefined. That's unfortunate, because each of the operations depends on the previous one finishing.
@@ -285,7 +283,7 @@ void HelloTriangleApplication::DrawFrame()
 	//The last parameter specifies a variable to output the index of the swap chain image that has become available.
 	//The index refers to the VkImage in our m_SwapChainImages array. We're going to use that index to pick the right command buffer.
 
-	VkResult result = vkAcquireNextImageKHR(m_UniqueCpu->GetDevice(), m_UniqueSwapChain->GetSwapChain(), std::numeric_limits<uint64_t>::max(), m_ImageAvailableSemaphores[m_CurrentFrame].GetSemaphore(), VK_NULL_HANDLE, &imageIndex);
+	VkResult result = vkAcquireNextImageKHR(m_UniqueCpu->GetDevice(), m_UniqueSwapChain->GetSwapChain(), std::numeric_limits<uint64_t>::max(), m_ImageAvailableSemaphores[m_CurrentFrame]->GetSemaphore(), VK_NULL_HANDLE, &imageIndex);
 
 	//if the swap chain turns out to be out of date when attempting to qcquire an image,
 	//then it is no longer possible to present it.
@@ -310,7 +308,7 @@ void HelloTriangleApplication::DrawFrame()
 	//We want to wait with writing colors to the image untill it's available, so we're specifying the stage of the graphics pipelines
 	//that writes to the color attachment. That means that theoretically the implementation can already start executing our vertex shader and such
 	//while the image is not yet available, each entry in the waitStages array corresponds to the semaphore with the same index in pWaitSemaphores.
-	VkSemaphore waitSemaphores[] = { m_ImageAvailableSemaphores[m_CurrentFrame].GetSemaphore() };
+	VkSemaphore waitSemaphores[] = { m_ImageAvailableSemaphores[m_CurrentFrame]->GetSemaphore() };
 	VkPipelineStageFlags waitStages[]{ VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
 	submitInfo.waitSemaphoreCount = 1;
 	submitInfo.pWaitSemaphores = waitSemaphores;
@@ -323,19 +321,19 @@ void HelloTriangleApplication::DrawFrame()
 
 	//The signalSemaphoreCount and pSigneSemaphores parameters specify which semaphores to signal once the command buffer(s) have finished execution.
 	//In our case we're using the m_RenderFinishedSemaphore for that purpose.
-	VkSemaphore signalSemaphores[] = { m_RenderFinishedSemaphores[m_CurrentFrame].GetSemaphore() };
+	VkSemaphore signalSemaphores[] = { m_RenderFinishedSemaphores[m_CurrentFrame]->GetSemaphore() };
 	submitInfo.signalSemaphoreCount = 1;
 	submitInfo.pSignalSemaphores = signalSemaphores;
 
 	//Unlike the semaphores, we manually need to restore the fence
 	//to the unsignaled state by resetting it with the vkResetFence call.
-	vkResetFences(m_UniqueCpu->GetDevice(), 1, &m_InFlightFences[m_CurrentFrame].GetFence());
+	vkResetFences(m_UniqueCpu->GetDevice(), 1, &m_InFlightFences[m_CurrentFrame]->GetFence());
 
 	//We can now submit the command buffer to the graphics queue using vkQueueSubmit.
 	//the function takes an array of VkSubmitInfo structues as argument for efficiency when the workload is much larger.
 	//The last parameter references an optional fence that will be signaled when the command buffers finish execution.
 	///Deprecated: We're using semaphores for synchronization, so we'll just pass a VK_NULL_HANDLE
-	if (vkQueueSubmit(m_UniqueCpu->GetGraphicsQueue(), 1, &submitInfo, m_InFlightFences[m_CurrentFrame].GetFence()) != VK_SUCCESS)
+	if (vkQueueSubmit(m_UniqueCpu->GetGraphicsQueue(), 1, &submitInfo, m_InFlightFences[m_CurrentFrame]->GetFence()) != VK_SUCCESS)
 		throw std::runtime_error("failed to submit draw command buffer!");
 
 	VkPresentInfoKHR presentInfo = {};
@@ -391,14 +389,11 @@ void HelloTriangleApplication::DrawFrame()
 //Create semaphores and fences
 void HelloTriangleApplication::CreateSyncObjects()
 {
-	VkSemaphoreCreateInfo semaphoreInfo = {};
-	semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
 	{
-		m_ImageAvailableSemaphores.emplace_back(Semaphore(m_UniqueCpu.get()));
-		m_RenderFinishedSemaphores.emplace_back(Semaphore(m_UniqueCpu.get()));
-		m_InFlightFences.emplace_back(Fence(m_UniqueCpu.get()));
+		m_ImageAvailableSemaphores.push_back(std::make_unique<Semaphore>(m_UniqueCpu.get()));
+		m_RenderFinishedSemaphores.push_back(std::make_unique<Semaphore>(m_UniqueCpu.get()));
+		m_InFlightFences.push_back(std::make_unique<Fence>(m_UniqueCpu.get()));
 	}
 }
 
@@ -438,7 +433,7 @@ void HelloTriangleApplication::RecreateSwapChain()
 	//CreateColorResources();
 
 	//The resolution of the depth buffer should change when the window is resized to match the new color attachment resolution.
-	CreateDepthResources();
+	//CreateDepthResources();
 
 	//The frame buffers and command buffers also directly depend on the swap chain images.
 	//CreateFrameBuffers();
@@ -453,31 +448,4 @@ void HelloTriangleApplication::FrameBufferResizeCallback(GLFWwindow* pWindow, in
 {
 	HelloTriangleApplication* pApp = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(pWindow));
 	pApp->m_FrameBufferResized = true;
-}
-
-void HelloTriangleApplication::CreateDepthResources()
-{
-	//Creating a depth image is fairly straightforward. It should have the same resolution as the color
-	//attachment, defined by the swap chain extent, an image usage appropriate for a depth attachment, 
-	//optimal tiling and device local memory.
-
-	//Unlike the texture image, we don't necessarily need a specific format, because we won't be directly accessing
-	//the texels from the program. It just needs to have a reasonable accuracy, at least 23 bits is common in real-world applications.
-	//There are several formats that fit this requirement:
-	//VK_FORMAT_D32_SFLOAT: 32-bit float for depth
-	//VK_FORMAT_D32_SFLOAT_S8_UINT: 32-bit signed float for depth and 8 bit stencil component
-	//VK_FORMAT_D24_UNORM_S8_UINT: 24-bit float for depth and 8 bit stencil component
-	//The stencil component is used for stencil tests, which is an additional test that can be combined with depth testing.
-	m_UniqueDepthBuffer = std::make_unique<Buffer2D>(m_UniqueCpu.get(), m_UniqueCommandPool.get(), m_UniqueRenderPass.get(), m_UniqueGpu.get(),
-		m_UniqueSwapChain->GetExtent().width, m_UniqueSwapChain->GetExtent().height, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, FindDepthFormat(m_UniqueGpu.get()), VK_IMAGE_ASPECT_PLANE_1_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-
-	//VkFormat depthFormat = FindDepthFormat(m_UniqueGpu.get());
-	//CreateImage(m_UniqueSwapChain->GetExtent().width, m_UniqueSwapChain->GetExtent().height, 1, m_UniqueRenderPass->GetSamplesCount(), depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_DepthImage, m_DepthImageMemory, m_UniqueCpu.get(), m_UniqueGpu.get());
-	//m_DepthImageView = CreateImageView(m_DepthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1, m_UniqueCpu.get());
-
-	////The undefined layout can be used as initial layout, becasue there are no existing depth image contets that matter.
-	////We need to update some of the logic in transitionImageLayout to use the right subrouse aspect.
-	//TransitionImageLayout(m_DepthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1, m_UniqueCommandPool.get(), m_UniqueCpu.get());
-
 }
