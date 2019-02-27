@@ -8,6 +8,8 @@
 #include <vector>
 #include <string>
 
+#include "../Vulkan/Vertex.h"
+
 class LogicalDevice;
 class PhysicalDevice;
 class CommandPool;
@@ -25,4 +27,5 @@ void CopyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t 
 bool HasStencilComponent(VkFormat format);
 std::vector<char> ReadFile(const std::string& fileName);
 void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels, CommandPool* pCommandPool, LogicalDevice* pCpu);
+void LoadModel(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, const std::string& path);
 
