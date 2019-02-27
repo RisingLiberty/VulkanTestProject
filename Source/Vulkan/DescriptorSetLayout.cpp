@@ -54,5 +54,6 @@ DescriptorSetLayout::DescriptorSetLayout(LogicalDevice* pCpu):
 
 DescriptorSetLayout::~DescriptorSetLayout()
 {
+
 	vkDestroyDescriptorSetLayout(m_pCpu->GetDevice(), m_DescriptorSetLayout, nullptr);
 }

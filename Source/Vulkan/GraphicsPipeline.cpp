@@ -311,6 +311,6 @@ GraphicsPipeline::GraphicsPipeline(LogicalDevice* pCpu, SwapChain* pSwapChain, R
 
 GraphicsPipeline::~GraphicsPipeline()
 {
-
+	vkDestroyPipeline(m_pCpu->GetDevice(), m_Pipeline, nullptr);
 }
 

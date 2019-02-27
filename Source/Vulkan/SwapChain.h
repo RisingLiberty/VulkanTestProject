@@ -2,8 +2,8 @@
 
 #ifndef GLFW_INCLUDE_VULKAN
 #define GLFW_INCLUDE_VULKAN
-#endif
 #include <GLFW/glfw3.h>
+#endif
 
 #include <vector>
 
@@ -34,8 +34,8 @@ public:
 	VkExtent2D GetExtent() const { return m_SwapChainExtent; }
 	VkFormat GetFormat() const { return m_SwapChainImageFormat; }
 	const std::vector<VkFramebuffer>& GetFrameBuffers() const { return m_FrameBuffers; }
-	const std::vector<VkImageView>& GetImageViews() const { return m_SwapChainImageViews; }
-	const std::vector<VkImage>& GetImages() const { return m_SwapChainImages; }
+	const std::vector<VkImageView>& GetImageViews() const { return m_ImageViews; }
+	const std::vector<VkImage>& GetImages() const { return m_Images; }
 	const std::vector<VkBuffer>& GetUniformBuffers() const { return m_UniformBuffers; }
 
 	void CreateImageViews();
@@ -51,11 +51,11 @@ private:
 	Window* m_pWindow;
 
 	VkSwapchainKHR m_SwapChain;
-	std::vector<VkImage> m_SwapChainImages;
+	std::vector<VkImage> m_Images;
 	VkFormat m_SwapChainImageFormat;
 	VkExtent2D m_SwapChainExtent;
-	std::vector<VkImageView> m_SwapChainImageViews;
-	LogicalDevice* m_pLogicalDevice;
+	std::vector<VkImageView> m_ImageViews;
+	LogicalDevice* m_pCpu;
 	std::vector<VkBuffer> m_UniformBuffers;
 	std::vector<VkDeviceMemory> m_UniformBuffersMemory;
 	std::vector<VkFramebuffer> m_FrameBuffers;

@@ -14,7 +14,7 @@
 
 SwapChain::SwapChain(PhysicalDevice* pPhysicalDevice, Window* pWindow, Surface* pSurface, LogicalDevice* pCpu):
 	m_pWindow(pWindow),
-	m_pLogicalDevice(pCpu),
+	m_pCpu(pCpu),
 	m_pPhysicalDevice(pPhysicalDevice)
 {
 	const SwapChainSupportDetails swapChainSupport = pPhysicalDevice->GetDesc().SwapChainSupportDetails;
@@ -79,8 +79,8 @@ SwapChain::SwapChain(PhysicalDevice* pPhysicalDevice, Window* pWindow, Surface* 
 		throw std::runtime_error("failed to create swap chain!");
 
 	vkGetSwapchainImagesKHR(pCpu->GetDevice(), m_SwapChain, &imageCount, nullptr);
-	m_SwapChainImages.resize(imageCount);
-	vkGetSwapchainImagesKHR(pCpu->GetDevice(), m_SwapChain, &imageCount, m_SwapChainImages.data());
+	m_Images.resize(imageCount);
+	vkGetSwapchainImagesKHR(pCpu->GetDevice(), m_SwapChain, &imageCount, m_Images.data());
 
 	m_SwapChainImageFormat = surfaceFormat.format;
 	m_SwapChainExtent = extent;
@@ -88,11 +88,20 @@ SwapChain::SwapChain(PhysicalDevice* pPhysicalDevice, Window* pWindow, Surface* 
 
 SwapChain::~SwapChain()
 {
-	for (size_t i = 0; i < m_SwapChainImages.size(); ++i)
+	for (size_t i = 0; i < m_FrameBuffers.size(); ++i)
+		vkDestroyFramebuffer(m_pCpu->GetDevice(), m_FrameBuffers[i], nullptr);
+
+	for (size_t i = 0; i < m_Images.size(); ++i)
 	{
-		vkDestroyBuffer(m_pLogicalDevice->GetDevice(), m_UniformBuffers[i], nullptr);
-		vkFreeMemory(m_pLogicalDevice->GetDevice(), m_UniformBuffersMemory[i], nullptr);
+		vkDestroyBuffer(m_pCpu->GetDevice(), m_UniformBuffers[i], nullptr);
+		vkFreeMemory(m_pCpu->GetDevice(), m_UniformBuffersMemory[i], nullptr);
 	}
+
+	for (size_t i = 0; i < m_ImageViews.size(); ++i)
+		vkDestroyImageView(m_pCpu->GetDevice(), m_ImageViews[i], nullptr);
+
+	vkDestroySwapchainKHR(m_pCpu->GetDevice(), m_SwapChain, nullptr);
+
 }
 
 VkSurfaceFormatKHR SwapChain::ChooseSwapChainSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats)
@@ -111,25 +120,25 @@ VkSurfaceFormatKHR SwapChain::ChooseSwapChainSurfaceFormat(const std::vector<VkS
 
 void SwapChain::CreateImageViews()
 {
-	m_SwapChainImageViews.resize(m_SwapChainImages.size());
+	m_ImageViews.resize(m_Images.size());
 
-	for (size_t i = 0; i < m_SwapChainImages.size(); ++i)
+	for (size_t i = 0; i < m_Images.size(); ++i)
 	{
-		m_SwapChainImageViews[i] = CreateImageView(m_SwapChainImages[i], m_SwapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1, m_pLogicalDevice);
+		m_ImageViews[i] = CreateImageView(m_Images[i], m_SwapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1, m_pCpu);
 	}
 }
 
 void SwapChain::CreateFrameBuffers(const VkRenderPass& renderPass, const VkImageView& colorImageView, const VkImageView& depthImageView)
 {
-	m_FrameBuffers.resize(m_SwapChainImageViews.size());
+	m_FrameBuffers.resize(m_ImageViews.size());
 
-	for (size_t i = 0; i < m_SwapChainImageViews.size(); ++i)
+	for (size_t i = 0; i < m_ImageViews.size(); ++i)
 	{
 		std::array<VkImageView, 3> attachements =
 		{
 			colorImageView,
 			depthImageView,
-			m_SwapChainImageViews[i]
+			m_ImageViews[i]
 		};
 
 		//as you can see, creation of framebuffers is quite straightforward.
@@ -151,7 +160,7 @@ void SwapChain::CreateFrameBuffers(const VkRenderPass& renderPass, const VkImage
 		framebufferInfo.height = m_SwapChainExtent.height;
 		framebufferInfo.layers = 1;
 
-		if (vkCreateFramebuffer(m_pLogicalDevice->GetDevice(), &framebufferInfo, nullptr, &m_FrameBuffers[i]) != VK_SUCCESS)
+		if (vkCreateFramebuffer(m_pCpu->GetDevice(), &framebufferInfo, nullptr, &m_FrameBuffers[i]) != VK_SUCCESS)
 			throw std::runtime_error("failed to create framebuffer!");
 	}
 
@@ -161,11 +170,11 @@ void SwapChain::CreateUniformBuffer()
 {
 	VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
-	m_UniformBuffers.resize(m_SwapChainImages.size());
-	m_UniformBuffersMemory.resize(m_SwapChainImages.size());
+	m_UniformBuffers.resize(m_Images.size());
+	m_UniformBuffersMemory.resize(m_Images.size());
 
-	for (size_t i = 0; i < m_SwapChainImages.size(); ++i)
-		CreateBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, m_UniformBuffers[i], m_UniformBuffersMemory[i], m_pLogicalDevice, m_pPhysicalDevice);
+	for (size_t i = 0; i < m_Images.size(); ++i)
+		CreateBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, m_UniformBuffers[i], m_UniformBuffersMemory[i], m_pCpu, m_pPhysicalDevice);
 
 }
 
@@ -238,8 +247,8 @@ void SwapChain::UpdateUniformBuffer(uint32_t currentImage)
 	//https://github.com/PacktPublishing/Vulkan-Cookbook
 	//https://github.com/SaschaWillems/Vulkan
 	void* data;
-	vkMapMemory(m_pLogicalDevice->GetDevice(), m_UniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
+	vkMapMemory(m_pCpu->GetDevice(), m_UniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
 	memcpy(data, &ubo, sizeof(ubo));
-	vkUnmapMemory(m_pLogicalDevice->GetDevice(), m_UniformBuffersMemory[currentImage]);
+	vkUnmapMemory(m_pCpu->GetDevice(), m_UniformBuffersMemory[currentImage]);
 
 }

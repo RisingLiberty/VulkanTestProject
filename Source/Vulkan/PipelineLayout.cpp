@@ -3,7 +3,8 @@
 #include "LogicalDevice.h"
 #include "DescriptorSetLayout.h"
 
-PipelineLayout::PipelineLayout(LogicalDevice* pCpu, DescriptorSetLayout* pDescSetLayout)
+PipelineLayout::PipelineLayout(LogicalDevice* pCpu, DescriptorSetLayout* pDescSetLayout):
+	m_pCpu(pCpu)
 {
 	//We need to specifiy the descriptor set layout during pipeline creation to tell Vulkan which descriptors
 	//the shaders will be using. Descriptor set layouts are specified in the pipeline layout objects.
@@ -19,3 +20,7 @@ PipelineLayout::PipelineLayout(LogicalDevice* pCpu, DescriptorSetLayout* pDescSe
 		throw std::runtime_error("failed to create pipeline layout");
 }
 
+PipelineLayout::~PipelineLayout()
+{
+	vkDestroyPipelineLayout(m_pCpu->GetDevice(), m_PipelineLayout, nullptr);
+}
