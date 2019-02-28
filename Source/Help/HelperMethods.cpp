@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <fstream>
 #include <unordered_map>
+#include <iostream>
 
 VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels, LogicalDevice* pLogicalDevice)
 {
@@ -516,6 +517,8 @@ void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayo
 
 void LoadModel(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, const std::string& path)
 {
+	std::cout << "starting to load model\n";
+
 	tinyobj::attrib_t attrib;
 	std::vector<tinyobj::shape_t> shapes;
 	std::vector<tinyobj::material_t> materials;
@@ -582,3 +585,4 @@ void LoadModel(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, co
 		}
 	}
 }
+
