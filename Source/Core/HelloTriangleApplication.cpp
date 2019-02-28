@@ -10,6 +10,7 @@
 #include <fstream>
 #include <array>
 #include <unordered_map>
+#include <thread>
 
 //Exposes functions to do precise timekeeping.
 #include <chrono>
@@ -126,11 +127,20 @@ void main()
 //Multiple subpasses
 //Compute shaders
 
+//maybe put this back in the define
+/*std::cout << initLog << std::endl;\
+std::cout << std::string(20, '-') << std::endl << std::endl;\*/
+
+#define FULL_CREATION(initLog, creation, initFinsishedLog)\
+creation;\
+std::cout << initFinsishedLog << std::endl;\
+std::cout << std::string(30, '-') << std::endl << std::endl;
+
 HelloTriangleApplication::HelloTriangleApplication()
 {
-	m_UniqueWindow = std::make_unique<Window>(WIDTH, HEIGHT, "VulkanTestProject", false);
-	m_UniqueInstance = std::make_unique<VulkanInstance>(true);
-	m_UniqueSurface = std::make_unique<Surface>(m_UniqueInstance->GetInstance(), m_UniqueWindow->GetGLFWWindow());
+	FULL_CREATION("Window being created", m_UniqueWindow = std::make_unique<Window>(WIDTH, HEIGHT, "VulkanTestProject", false), "Window created");
+	FULL_CREATION("Instance being created", m_UniqueInstance = std::make_unique<VulkanInstance>(true), "Instance created");
+	FULL_CREATION("Surface being created", m_UniqueSurface = std::make_unique<Surface>(m_UniqueInstance->GetInstance(), m_UniqueWindow->GetGLFWWindow()), "Surface created");
 }
 
 HelloTriangleApplication::~HelloTriangleApplication()
@@ -146,37 +156,52 @@ void HelloTriangleApplication::Run()
 
 void HelloTriangleApplication::InitializeVulkan()
 {
-	PickPhysicalDevice();
-	m_UniqueCpu = std::make_unique<LogicalDevice>(m_UniqueInstance.get(), m_UniqueGpu.get(), m_DeviceExtensions, m_ValidationLayers);
-	m_UniqueSwapChain = std::make_unique<SwapChain>(m_UniqueGpu.get(), m_UniqueWindow.get(), m_UniqueSurface.get(), m_UniqueCpu.get());
-	m_UniqueSwapChain->CreateImageViews();
-	m_UniqueRenderPass = std::make_unique<RenderPass>(m_UniqueCpu.get(), m_UniqueSwapChain.get(), m_UniqueGpu.get());
-	m_UniqueDescriptorSetLayout = std::make_unique<DescriptorSetLayout>(m_UniqueCpu.get());
-	m_UniquePipeline = std::make_unique<GraphicsPipeline>(m_UniqueCpu.get(), m_UniqueSwapChain.get(), m_UniqueRenderPass.get(), m_UniqueDescriptorSetLayout.get());
-	m_UniqueCommandPool = std::make_unique<CommandPool>(m_UniqueCpu.get(), m_UniqueGpu.get());
+	//Start loading model on new thread
+	//needs std::ref because we're running this method on a new thread
+	auto startTime = std::chrono::high_resolution_clock::now();
 
-	m_UniqueRenderTarget = std::make_unique<Buffer2D>(m_UniqueCpu.get(), m_UniqueCommandPool.get(), m_UniqueRenderPass.get(), m_UniqueGpu.get(),
+	std::thread t1(LoadModel, std::ref(m_Vertices),  std::ref(m_Indices), MODEL_PATH);
+
+	
+
+	FULL_CREATION("Physical device being created", PickPhysicalDevice(), "Physical device created");
+	FULL_CREATION("Logical device being created", m_UniqueCpu = std::make_unique<LogicalDevice>(m_UniqueInstance.get(), m_UniqueGpu.get(), m_DeviceExtensions, m_ValidationLayers), "Logical device created");
+	FULL_CREATION("Swapchain being created", m_UniqueSwapChain = std::make_unique<SwapChain>(m_UniqueGpu.get(), m_UniqueWindow.get(), m_UniqueSurface.get(), m_UniqueCpu.get()), "Swapchain created");
+	FULL_CREATION("Swapchain image view being created", m_UniqueSwapChain->CreateImageViews(), "Swapchain image views created");
+	FULL_CREATION("Renderpass being created", m_UniqueRenderPass = std::make_unique<RenderPass>(m_UniqueCpu.get(), m_UniqueSwapChain.get(), m_UniqueGpu.get()), "Renderpass created");
+	FULL_CREATION("DescriptionSetLayout being created", m_UniqueDescriptorSetLayout = std::make_unique<DescriptorSetLayout>(m_UniqueCpu.get()), "DescriptionSetLayout created");
+	FULL_CREATION("Graphics pipeline being created", m_UniquePipeline = std::make_unique<GraphicsPipeline>(m_UniqueCpu.get(), m_UniqueSwapChain.get(), m_UniqueRenderPass.get(), m_UniqueDescriptorSetLayout.get()), "Graphics pipeline created");
+	FULL_CREATION("Command pool being created", m_UniqueCommandPool = std::make_unique<CommandPool>(m_UniqueCpu.get(), m_UniqueGpu.get()), "Command pool created");
+
+	FULL_CREATION("RenderTarget being created", m_UniqueRenderTarget = std::make_unique<Buffer2D>(m_UniqueCpu.get(), m_UniqueCommandPool.get(), m_UniqueRenderPass.get(), m_UniqueGpu.get(),
 		m_UniqueSwapChain->GetExtent().width, m_UniqueSwapChain->GetExtent().height,
 		VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-		m_UniqueSwapChain->GetFormat(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+		m_UniqueSwapChain->GetFormat(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL), "Render target created");
 
-	m_UniqueDepthBuffer = std::make_unique<DepthBuffer>(m_UniqueCpu.get(), m_UniqueCommandPool.get(), m_UniqueRenderPass.get(), m_UniqueGpu.get(), m_UniqueSwapChain->GetExtent().width, m_UniqueSwapChain->GetExtent().height);
-	m_UniqueSwapChain->CreateFrameBuffers(m_UniqueRenderPass->GetRenderPass(), m_UniqueRenderTarget->GetImageView(), m_UniqueDepthBuffer->GetBuffer()->GetImageView());
-	m_UniqueTexture = std::make_unique<Texture>(m_UniqueCpu.get(), m_UniqueGpu.get(), m_UniqueCommandPool.get());
-	m_UniqueSampler = std::make_unique<TextureSampler>(m_UniqueCpu.get(), m_UniqueTexture->GetSamples());
+	FULL_CREATION("Depth buffer being created", m_UniqueDepthBuffer = std::make_unique<DepthBuffer>(m_UniqueCpu.get(), m_UniqueCommandPool.get(), m_UniqueRenderPass.get(), m_UniqueGpu.get(), m_UniqueSwapChain->GetExtent().width, m_UniqueSwapChain->GetExtent().height), "Depth buffer created");
+	FULL_CREATION("Frame buffers being created", m_UniqueSwapChain->CreateFrameBuffers(m_UniqueRenderPass->GetRenderPass(), m_UniqueRenderTarget->GetImageView(), m_UniqueDepthBuffer->GetBuffer()->GetImageView()), "Frame buffers created");
+	FULL_CREATION("Texture being created", m_UniqueTexture = std::make_unique<Texture>(m_UniqueCpu.get(), m_UniqueGpu.get(), m_UniqueCommandPool.get()), "Texture created");
+	FULL_CREATION("Sampler being created", m_UniqueSampler = std::make_unique<TextureSampler>(m_UniqueCpu.get(), m_UniqueTexture->GetSamples()), "Sampler created");
 
-	LoadModel(m_Vertices, m_Indices, MODEL_PATH);
-	std::cout << "[Model loaded]\n";
+	//Wait for model to be loaded.
+	std::cout << "waiting for model to be loaded.." << std::endl;
+	t1.join();
+	std::cout << "Model loaded\n";
 
-	m_UniqueVertexBuffer = std::make_unique<VertexBuffer>(m_UniqueCpu.get(), m_UniqueGpu.get(), m_UniqueCommandPool.get(), m_Vertices);
-	m_UniqueIndexBuffer = std::make_unique<IndexBuffer>(m_UniqueCpu.get(), m_UniqueGpu.get(), m_UniqueCommandPool.get(), m_Indices);
+	auto now = std::chrono::high_resolution_clock::now();
+	std::cout << "time it took to load model: " << std::chrono::duration<float>(now - startTime).count() << " seconds" << std::endl;
+	
 
-	m_UniqueSwapChain->CreateUniformBuffer();
 
-	m_UniqueDescriptorPool = std::make_unique<DescriptorPool>(m_UniqueCpu.get(), m_UniqueSwapChain->GetImages().size());
-	m_UniqueDescriptorPool->CreateDescriptorSets(m_UniqueSwapChain.get(), m_UniqueDescriptorSetLayout.get(), m_UniqueSampler.get(), m_UniqueTexture.get());
-	m_UniqueCommandPool->CreateCommandBuffers(m_UniqueRenderPass.get(), m_UniqueSwapChain.get(), m_UniqueVertexBuffer.get(), m_UniqueIndexBuffer.get(), m_UniquePipeline.get(), m_UniqueDescriptorPool->GetSets());
-	CreateSyncObjects();
+	FULL_CREATION("Vertex buffer being created", m_UniqueVertexBuffer = std::make_unique<VertexBuffer>(m_UniqueCpu.get(), m_UniqueGpu.get(), m_UniqueCommandPool.get(), m_Vertices), "Vertex buffer created");
+	FULL_CREATION("Index buffer being created", m_UniqueIndexBuffer = std::make_unique<IndexBuffer>(m_UniqueCpu.get(), m_UniqueGpu.get(), m_UniqueCommandPool.get(), m_Indices), "Index buffer created");
+
+	FULL_CREATION("Uniform buffer being created", m_UniqueSwapChain->CreateUniformBuffer(), "Uniform buffer created");
+
+	FULL_CREATION("Descriptor pool being created", m_UniqueDescriptorPool = std::make_unique<DescriptorPool>(m_UniqueCpu.get(), m_UniqueSwapChain->GetImages().size()), "Descriptor pool created");
+	FULL_CREATION("Descriptor sets being created", m_UniqueDescriptorPool->CreateDescriptorSets(m_UniqueSwapChain.get(), m_UniqueDescriptorSetLayout.get(), m_UniqueSampler.get(), m_UniqueTexture.get()), "Descriptor sets created");
+	FULL_CREATION("Command buffers being created", m_UniqueCommandPool->CreateCommandBuffers(m_UniqueRenderPass.get(), m_UniqueSwapChain.get(), m_UniqueVertexBuffer.get(), m_UniqueIndexBuffer.get(), m_UniquePipeline.get(), m_UniqueDescriptorPool->GetSets()), "Command buffers created");
+	FULL_CREATION("Sync objects being created", CreateSyncObjects(), "Sync objects created");
 }
 
 void HelloTriangleApplication::MainLoop()
@@ -438,14 +463,4 @@ void HelloTriangleApplication::RecreateSwapChain()
 	//The frame buffers and command buffers also directly depend on the swap chain images.
 	//CreateFrameBuffers();
 	//CreateCommandBuffers();
-}
-
-//The reason that we're creating a static function as a callback is because GLFW does not know how
-//to properly call a member function with the right this pointer to our HelloTriangleApplication instance.
-//However, we do get a reference to the GLFWwindow in the callback and there is another GLFW function that
-//allows you to store an arbitrary pointer inside of it: glfwSetWindowUserPointer
-void HelloTriangleApplication::FrameBufferResizeCallback(GLFWwindow* pWindow, int width, int height)
-{
-	HelloTriangleApplication* pApp = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(pWindow));
-	pApp->m_FrameBufferResized = true;
 }

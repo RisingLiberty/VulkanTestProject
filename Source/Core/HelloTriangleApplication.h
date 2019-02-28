@@ -55,13 +55,7 @@ private:
 	//Create semaphores and fences
 	void CreateSyncObjects();
 	void RecreateSwapChain();
-
-	//The reason that we're creating a static function as a callback is because GLFW does not know how
-	//to properly call a member function with the right this pointer to our HelloTriangleApplication instance.
-	//However, we do get a reference to the GLFWwindow in the callback and there is another GLFW function that
-	//allows you to store an arbitrary pointer inside of it: glfwSetWindowUserPointer
-	static void FrameBufferResizeCallback(GLFWwindow* pWindow, int width, int height);
-
+	
 private:
 	std::unique_ptr<Window> m_UniqueWindow;
 	std::unique_ptr<VulkanInstance> m_UniqueInstance;
@@ -94,10 +88,6 @@ private:
 	std::vector<std::unique_ptr<Semaphore>> m_RenderFinishedSemaphores;
 	std::vector<std::unique_ptr<Fence>> m_InFlightFences;
 
-	//std::vector<VkSemaphore> m_ImageAvailableSemaphores;
-	//std::vector<VkSemaphore> m_RenderFinishedSemaphores;
-	//std::vector<VkFence> m_InFlightFences;
-
 	size_t m_CurrentFrame = 0;
 	bool m_FrameBufferResized = false;
 
@@ -108,42 +98,10 @@ private:
 
 	//Interleaving vertex attributes: all vertices and their attributes are defined in 1 buffer
 	std::vector<Vertex> m_Vertices;
-	//{
-	//	//		Position				Color			TexCoord
-	//	//-----------------------------------------------------------
-	//	{{-0.5f, -0.5f,  0.0f},  {1.0f, 0.0f, 0.0f},  {1.0f, 0.0f}},
-	//	{{ 0.5f, -0.5f,  0.0f},  {0.0f, 1.0f, 0.0f},  {0.0f, 0.0f}},
-	//	{{ 0.5f,  0.5f,  0.0f},  {0.0f, 0.0f, 1.0f},  {0.0f, 1.0f}},
-	//	{{-0.5f,  0.5f,  0.0f},  {1.0f, 1.0f, 1.0f},  {1.0f, 1.0f}},
-
-	//	{{-0.5f, -0.5f, -0.5f},  {1.0f, 0.0f, 0.0f},  {1.0f, 0.0f}},
-	//	{{ 0.5f, -0.5f, -0.5f},  {0.0f, 1.0f, 0.0f},  {0.0f, 0.0f}},
-	//	{{ 0.5f,  0.5f, -0.5f},  {0.0f, 0.0f, 1.0f},  {0.0f, 1.0f}},
-	//	{{-0.5f,  0.5f, -0.5f},  {1.0f, 1.0f, 1.0f},  {1.0f, 1.0f}}
-	//};
-
-	/*
-	-------
-	|\    |
-	| \ 1 |
-	|  \  |
-	| 2 \ |
-	|    \|
-	-------
-	*/
 
 	//It is possible to use either uin16_t or uin32_t for your index buffer depending on the number
 	//of entries in vertices. We can stick to uint16_t for now because we're using less than 65534 unique vertices
 	std::vector<uint32_t> m_Indices;
-	//{
-	//	//First plane
-	//	0,1,2, //top right
-	//	2,3,0,  //bottom left
-
-	//	//Second plane
-	//	4,5,6, //top right
-	//	6,7,4 //bottom left
-	//};
 
 	const uint32_t WIDTH = 800;
 	const uint32_t HEIGHT = 600;
