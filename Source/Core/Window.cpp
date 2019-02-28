@@ -28,6 +28,10 @@ Window::~Window()
 {
 }
 
+//The reason that we're creating a static function as a callback is because GLFW does not know how
+//to properly call a member function with the right this pointer to our HelloTriangleApplication instance.
+//However, we do get a reference to the GLFWwindow in the callback and there is another GLFW function that
+//allows you to store an arbitrary pointer inside of it: glfwSetWindowUserPointer
 void Window::OnResizeStatic(GLFWwindow* pWindow, int width, int height)
 {
 	Window* pMyWindow = reinterpret_cast<Window*>(glfwGetWindowUserPointer(pWindow));
